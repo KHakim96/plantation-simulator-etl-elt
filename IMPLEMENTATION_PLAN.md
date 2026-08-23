@@ -4,9 +4,9 @@
 
 **Architecture:** FINAL / FROZEN (see `ARCHITECTURE.md`)
 
-**Implementation:** IN PROGRESS — Phase 0, Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, and Phase 6 complete (Phase 2 delivered as ADF Copy Landing → Bronze **file** ingestion; Phase 3 delivered as Databricks Spark Bronze CSV → Silver Delta; Phase 4 delivered as the Databricks Serverless Silver **Data Quality gate**; Phase 5 delivered as Databricks Spark Silver → Gold Delta; Phase 6 delivered as Azure Synapse Serverless SQL historical serving over Gold Delta; see Phase 2, Phase 3, Phase 4, Phase 5, and Phase 6 Evidence)
+**Implementation:** IN PROGRESS — Phase 0, Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, and Phase 7 complete (Phase 2 delivered as ADF Copy Landing → Bronze **file** ingestion; Phase 3 delivered as Databricks Spark Bronze CSV → Silver Delta; Phase 4 delivered as the Databricks Serverless Silver **Data Quality gate**; Phase 5 delivered as Databricks Spark Silver → Gold Delta; Phase 6 delivered as Azure Synapse Serverless SQL historical serving over Gold Delta; Phase 7 delivered as the Databricks Serverless **live sensor streaming path** (Auto Loader → live Bronze Delta → live Silver Delta) with checkpoints on ADLS; see Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, and Phase 7 Evidence)
 
-**Current phase:** Phase 7 — Live Sensor Streaming
+**Current phase:** Phase 8 — Databricks SQL + Streamlit
 
 > **Phase 2 design revision (human-approved).** The original Phase 2 design
 > wrote Bronze as Databricks **Delta** tables through a Databricks-linked ADF
@@ -927,7 +927,7 @@ and evidence are unchanged.
 
 ## Phase 7 — Live Sensor Streaming
 
-**Status:** NOT STARTED
+**Status:** COMPLETE (see Phase 7 Evidence below)
 
 **Objective**
 Implement the near-real-time sensor path: sensor simulator → ADLS Incoming →
@@ -972,6 +972,83 @@ with checkpoints on ADLS.
 - No Databricks SQL serving views, no dashboard, no streaming workflow JSON
   (Phase 9), no coupling of streaming to ADF/Gold/Synapse (intentionally
   excluded).
+
+### Phase 7 Evidence (recorded 2026-08-24, verified against real Azure)
+
+**Implementation:**
+- `data_generators/sensor_stream_to_adls.py` — live sensor simulator. Generates
+  15-minute-interval telemetry for 14 sensors (SNS-BLKxx-01/02 across 10
+  blocks; 2 sensors for BLK01/05/06/10) and uploads one CSV micro-batch per
+  interval to ADLS **Incoming** (`incoming/sensors/sensors_<UTC>.csv`). Uses the
+  same ADLS Gen2 REST Shared Key signing pattern as Phase 1 `upload_to_adls.py`
+  (env-var credentials only; an **Incoming-only** guard rejects any other
+  layer). Supports DRY-RUN (no network) and LIVE UPLOAD modes. CSV schema
+  matches `generate_sensors.py` exactly.
+- `databricks/streaming/sensors_stream.py` — Databricks Structured Streaming
+  job. Stage 1: **Auto Loader** (`cloudFiles`, explicit schema, no inference)
+  reads `incoming/sensors/` → appends raw-fidelity rows to **live Bronze**
+  Delta. Stage 2: reads live Bronze Delta as a stream →
+  `transform_live_silver` (cast timestamp/numerics, uppercase/trim IDs, drop
+  missing keys, `dropDuplicates(["sensor_id", "timestamp"])`, `_ingested_at`
+  audit) → appends to **live Silver** Delta. Both streams use
+  `trigger(availableNow=True)` (micro-batch drain-and-stop) and reuses the
+  Phase 3 helpers (`detect_environment`, `get_spark_session`,
+  `is_databricks_environment`) — no ADLS auth logic duplicated, no
+  `__file__`-dependent loading on Databricks.
+- `tests/test_sensor_streaming.py` — Phase 7 tests (pure local + Spark).
+
+**Authentication (Databricks):** **Unity Catalog external locations** backed by
+the storage credential `plantation_external_adls`. **No storage account key, no
+SAS token, no PAT, and no hard-coded secret** is read or configured by the
+Databricks streaming path (`fs.azure.account.key.*` is never set). External
+locations verified for `incoming`, `live-bronze`, `live-silver`, and
+`checkpoints`.
+
+**Deterministic ADLS paths:**
+- Input (Auto Loader): `abfss://incoming@plantationsimulatorrg.dfs.core.windows.net/sensors`
+- Live Bronze Delta: `abfss://live-bronze@plantationsimulatorrg.dfs.core.windows.net/sensors`
+- Live Silver Delta: `abfss://live-silver@plantationsimulatorrg.dfs.core.windows.net/sensors`
+- Bronze checkpoint: `abfss://checkpoints@plantationsimulatorrg.dfs.core.windows.net/sensors_stream/sensors_live_bronze`
+- Silver checkpoint: `abfss://checkpoints@plantationsimulatorrg.dfs.core.windows.net/sensors_stream/sensors_live_silver`
+
+**Databricks execution — VERIFIED (Azure Databricks Serverless):**
+`sensors_stream.py` ran on Azure Databricks Serverless (Unity Catalog enabled).
+(No Databricks run ID/URL is recorded here — it was not captured; execution was
+confirmed via the job's console output and the post-run live-layer row counts
+below.)
+
+**Live verification (all on Azure):**
+
+1. **Initial streaming run** — Incoming → live Bronze: **56 rows**; live Bronze
+   → live Silver: **56 rows**.
+2. **Restart / re-upload verification** — checkpoint state correctly prevented
+   reprocessing of already-processed files. Bronze increased **56 → 84**
+   because only **28 genuinely new readings** existed in that upload burst; the
+   2 overlapping files were **correctly ignored by Auto Loader** (exactly-once
+   checkpoint behavior). Silver also reached **84**. Investigation confirmed
+   **no data loss** and **0 duplicate** `sensor_id + timestamp` keys.
+3. **Clean incremental verification** — 4 explicitly non-overlapping files were
+   generated (`sensors_20260823T213000.csv`, `sensors_20260823T214500.csv`,
+   `sensors_20260823T220000.csv`, `sensors_20260823T221500.csv`; 56 new
+   readings) and uploaded to `incoming/sensors/`. `sensors_stream.py` was rerun
+   on Azure Databricks Serverless. Final counts: live Bronze **140**, live
+   Silver **140** (expected 84 + 56 = 140). ✔
+
+**Idempotency / restart-safety:** Auto Loader incremental file discovery +
+deterministic per-stream checkpoints on ADLS give exactly-once/incremental
+recovery; the rerun processed only newly arrived files (no duplicate
+reprocessing), and live Silver `dropDuplicates` on the business key guards
+against intra-batch duplicates.
+
+**Tests:** `.venv/bin/python -m pytest tests/ -q` → **91 passed, 21 skipped**
+(71 from Phases 0–6 unchanged; 20 net new Phase 7 always-on tests — the 2
+Spark-behavior tests skip locally because this workstation has no Java and run
+on any Java-enabled runner). Ruff: clean on all changed files.
+
+**Phase boundary respected:** no Databricks SQL serving views, no dashboard, no
+streaming workflow JSON, and no coupling of streaming to ADF/Gold/Synapse was
+added. Phase 8+ placeholders (`dashboard/app.py`,
+`databricks/sql/live_sensor_kpis.sql`, workflow JSON) remain untouched.
 
 ---
 
@@ -1121,15 +1198,14 @@ prepare the portfolio demo narrative.
 ---
 
 **Next action:**
-Phase 7 — Live Sensor Streaming. Phase 6 is complete: the six Gold Delta
-datasets are exposed through Azure Synapse Serverless SQL (built-in serverless
-endpoint, no dedicated pool) as twelve verified objects — six base external
-objects (`gold.ext_<model>` over `OPENROWSET(... FORMAT='DELTA')` on the Gold
-container, managed-identity access) and six serving views (`gold.vw_<model>`).
-Row counts match the Phase 5 verified Gold output exactly (40,166 total:
-dim_equipment 30, dim_employee 24, fact_harvest 9,112, fact_revenue 12,000,
-fact_fertilizer 9,000, fact_equipment 10,000), with zero duplicate/null
-business keys and a verified live analytical query — see Phase 6 Evidence.
-Phase 7 implements the near-real-time sensor path: sensor simulator → ADLS
-Incoming → Auto Loader → Structured Streaming → live Bronze Delta → live
-Silver Delta, with checkpoints on ADLS.
+Phase 8 — Databricks SQL + Streamlit. Phase 7 is complete: the live sensor
+streaming path (sensor simulator → ADLS Incoming → Auto Loader → Structured
+Streaming → live Bronze Delta → live Silver Delta) is implemented and verified
+on Azure Databricks Serverless with checkpoints on ADLS — final live counts
+live Bronze **140** / live Silver **140** (initial 56-row run, checkpoint-based
+restart/re-upload protection with 0 duplicate keys, then a clean +56
+incremental run to 140; see Phase 7 Evidence). Phase 8 builds the Streamlit
+dashboard with two data paths: **historical via Synapse Serverless SQL**
+(Gold) and **live via Databricks SQL** (live Silver), served by the one shared
+serverless SQL Warehouse (`dashboard/app.py`,
+`databricks/sql/live_sensor_kpis.sql`).
