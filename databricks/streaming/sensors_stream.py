@@ -44,14 +44,16 @@ from __future__ import annotations
 
 # Reuse the Phase 3 environment/session helpers (same import pattern as Phase 4
 # dq_checks.py and Phase 5 silver_to_gold.py — databricks/batch has no
-# __init__.py). Two loaders are tried in order:
-#   1. ``importlib.import_module`` — works on Databricks Serverless, where a
-#      Git-backed repo file executed in the same folder has its directory on
-#      ``sys.path``. It does NOT rely on ``__file__``, which Databricks does
-#      not define.
-#   2. A file-relative load keyed off ``__file__`` — the local pytest path,
-#      where ``__file__`` is always defined. ``__file__`` is only evaluated
-#      inside this branch, so it is never touched on Databricks.
+# __init__.py). Those two jobs live in the SAME folder as bronze_to_silver.py,
+# so the executed file's directory (on ``sys.path`` in Databricks Git-backed
+# runs) already makes ``import bronze_to_silver`` resolve. This streaming job
+# lives in the SIBLING ``databricks/streaming`` folder, whose own directory is
+# on ``sys.path`` — but ``databricks/batch`` is not. The loader below therefore
+# resolves the repo ``batch`` directory by PROBING the filesystem for
+# ``bronze_to_silver.py`` (never by hard-coding a workspace path), prepends it
+# to ``sys.path``, and then does a NORMAL module import. It does NOT rely on
+# ``__file__`` (undefined on Databricks) and falls back to a ``__file__``-keyed
+# probe for local pytest/development.
 import importlib
 import importlib.util
 import os
@@ -66,36 +68,92 @@ from pyspark.sql.types import (
     StructType,
 )
 
+# Candidate directories (relative to the current working directory) that may
+# hold bronze_to_silver.py. On Databricks Git-backed Serverless the working
+# directory is the repo root or a folder inside it; the probe walks upward to
+# locate ``databricks/batch``. Locally the same probe works from the repo root.
+_BTS_MODULE_NAME = "bronze_to_silver"
+_BTS_REL_PATH = os.path.join("databricks", "batch", "bronze_to_silver.py")
+
+
+def _candidate_batch_dirs() -> list[str]:
+    """Yield candidate directories that could contain bronze_to_silver.py.
+
+    Probes (in order):
+      1. Every directory already on ``sys.path`` (normal import resolution).
+      2. The current working directory and each of its parents, looking for a
+         ``databricks/batch`` subfolder (Databricks Git-backed repo layout).
+      3. A ``__file__``-relative probe (``../batch`` from this file) — only
+         evaluated when ``__file__`` is defined (local dev), never on
+         Databricks.
+    Only directories where ``bronze_to_silver.py`` actually exists on disk are
+    returned; nothing is assumed to exist (AGENTS.md §5).
+    """
+    seen: set[str] = set()
+    candidates: list[str] = []
+
+    def _add(path: str) -> None:
+        norm = os.path.normpath(os.path.abspath(path))
+        if norm not in seen:
+            seen.add(norm)
+            candidates.append(norm)
+
+    # 1. Directories already importable.
+    for entry in sys.path:
+        if entry:
+            _add(entry)
+
+    # 2. Walk upward from the CWD checking each level for databricks/batch.
+    current = os.path.abspath(os.getcwd())
+    for _ in range(8):  # bounded upward walk; repo is not nested deeper
+        _add(os.path.join(current, "databricks", "batch"))
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+
+    # 3. __file__-relative probe (local only; skipped when __file__ is absent).
+    this_file = globals().get("__file__")
+    if this_file is not None:
+        here = os.path.dirname(os.path.abspath(this_file))
+        _add(os.path.join(here, "..", "batch"))
+        _add(here)
+
+    return candidates
+
 
 def _load_bronze_to_silver():
-    """Import bronze_to_silver without requiring ``__file__`` (Databricks-safe)."""
+    """Import bronze_to_silver without requiring ``__file__`` (Databricks-safe).
+
+    First tries a normal module import (works when the directory is already on
+    ``sys.path``). If that fails, probes the filesystem for the directory that
+    actually contains ``bronze_to_silver.py``, prepends it to ``sys.path``, and
+    retries the normal import. No hard-coded workspace/personal path is used —
+    the directory is discovered by the presence of the file itself.
+    """
     try:
-        return importlib.import_module("bronze_to_silver")
+        return importlib.import_module(_BTS_MODULE_NAME)
     except ImportError:
         pass
-    this_file = globals().get("__file__")
-    if this_file is None:
-        raise ImportError(
-            "Cannot import bronze_to_silver: it is not on sys.path and "
-            "__file__ is unavailable in this execution environment. Ensure the "
-            "script runs from a directory where bronze_to_silver.py is "
-            "importable (Databricks Git-backed repo) or on sys.path."
-        )
-    # databricks/streaming -> databricks/batch/bronze_to_silver.py
-    bts_path = os.path.join(
-        os.path.dirname(os.path.abspath(this_file)),
-        "..",
-        "batch",
-        "bronze_to_silver.py",
+
+    # Locate the real directory holding bronze_to_silver.py and import from it.
+    for directory in _candidate_batch_dirs():
+        target = os.path.join(directory, "bronze_to_silver.py")
+        if os.path.isfile(target):
+            if directory not in sys.path:
+                sys.path.insert(0, directory)
+            try:
+                return importlib.import_module(_BTS_MODULE_NAME)
+            except ImportError:
+                continue
+
+    raise ImportError(
+        "Cannot import bronze_to_silver: the file was not found in any "
+        "candidate directory on sys.path, under the current working "
+        "directory's databricks/batch, or relative to this file. Ensure the "
+        "script runs from the Git-backed repository (Databricks) or the repo "
+        "root (local) so databricks/batch/bronze_to_silver.py is discoverable."
     )
-    bts_path = os.path.normpath(bts_path)
-    spec = importlib.util.spec_from_file_location("bronze_to_silver", bts_path)
-    if spec is None or spec.loader is None:  # pragma: no cover - import guard
-        raise ImportError(f"Cannot load bronze_to_silver from {bts_path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["bronze_to_silver"] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 bts = _load_bronze_to_silver()

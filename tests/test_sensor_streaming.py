@@ -88,6 +88,73 @@ def test_module_loads_and_reuses_phase3_helpers():
     )
 
 
+def _exec_module_no_file(module_globals: dict, source: str) -> dict:
+    """Execute module source in a namespace WITHOUT __file__ defined.
+
+    Simulates the Databricks Git-backed Serverless execution environment, where
+    the executed Python file has no ``__file__`` global. ``__file__`` is
+    explicitly removed from the namespace before exec.
+    """
+    module_globals.pop("__file__", None)
+    exec(compile(source, "<sensors_stream_databricks>", "exec"), module_globals)  # noqa: S102
+    return module_globals
+
+
+def test_bronze_to_silver_import_resolves_without___file__(tmp_path, monkeypatch):
+    """Reproduce the Databricks failure: no __file__, batch not pre-imported.
+
+    Simulates Databricks Git-backed execution by:
+      * executing the real sensors_stream.py source in a namespace with NO
+        ``__file__`` defined,
+      * pointing the CWD at the repo root (as Databricks does),
+      * ensuring ``bronze_to_silver`` is not already importable from the
+        streaming folder (it lives in the sibling ``batch`` folder).
+    The loader must discover databricks/batch by probing the filesystem and
+    import bronze_to_silver via a normal module import.
+    """
+    # Ensure a clean import slate for the module name under test.
+    monkeypatch.delitem(sys.modules, "bronze_to_silver", raising=False)
+    monkeypatch.delitem(sys.modules, "sensors_stream", raising=False)
+    # Remove any pre-seeded path to databricks/batch so the probe must find it.
+    batch_dir = str(REPO_ROOT / "databricks" / "batch")
+    monkeypatch.setattr(
+        sys, "path", [p for p in sys.path if os.path.abspath(p or os.curdir) != batch_dir]
+    )
+    # Databricks runs with the repo root as CWD.
+    monkeypatch.chdir(REPO_ROOT)
+
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    namespace = {"__name__": "sensors_stream_databricks_sim"}
+    _exec_module_no_file(namespace, source)
+
+    # The executed module namespace must expose the reused Phase 3 helpers.
+    assert "__file__" not in namespace
+    assert callable(namespace["detect_environment"])
+    assert callable(namespace["get_spark_session"])
+    assert callable(namespace["is_databricks_environment"])
+    # And it must have imported the REAL bronze_to_silver module.
+    assert namespace["bts"].__name__ == "bronze_to_silver"
+    assert namespace["bts"].STORAGE_ACCOUNT == "plantationsimulatorrg"
+
+
+def test_candidate_batch_dirs_find_real_batch_dir_from_repo_root(monkeypatch):
+    """The CWD probe must locate databricks/batch from the repo root."""
+    monkeypatch.chdir(REPO_ROOT)
+    dirs = ss._candidate_batch_dirs()
+    batch_dir = os.path.normpath(str(REPO_ROOT / "databricks" / "batch"))
+    assert batch_dir in [os.path.normpath(d) for d in dirs]
+    # The located directory must actually contain bronze_to_silver.py.
+    assert os.path.isfile(os.path.join(batch_dir, "bronze_to_silver.py"))
+
+
+def test_candidate_batch_dirs_find_real_batch_dir_from_streaming_dir(monkeypatch):
+    """The upward CWD walk must find databricks/batch from a nested folder."""
+    monkeypatch.chdir(REPO_ROOT / "databricks" / "streaming")
+    dirs = [os.path.normpath(d) for d in ss._candidate_batch_dirs()]
+    batch_dir = os.path.normpath(str(REPO_ROOT / "databricks" / "batch"))
+    assert batch_dir in dirs
+
+
 def test_databricks_paths_are_deterministic_abfss():
     """All streaming paths on Databricks must be deterministic abfss://."""
     assert ss.get_incoming_path("databricks") == (
