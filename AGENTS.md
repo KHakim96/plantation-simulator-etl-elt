@@ -10,7 +10,7 @@ Type: Azure Data Engineering portfolio project (ETL/ELT, batch + streaming)
 This is a **new project built from scratch**. The repository started as an
 empty scaffold; Phase 0 (Azure foundation) and Phase 1 (source simulation +
 ADLS Landing delivery) are now **implemented and verified**. Later-phase
-artifacts (ADF pipelines, Spark jobs, dbt models, Synapse views, streaming,
+artifacts (ADF pipelines, Spark jobs, Synapse views, streaming,
 dashboard, workflows) remain placeholder/empty files and must still be treated
 as **planned, not implemented**.
 
@@ -22,7 +22,6 @@ The project demonstrates an Azure-based plantation analytics platform using:
 - Azure Databricks + Apache Spark
 - Delta Lake (Bronze / Silver / Gold)
 - Data Quality gates
-- dbt-databricks
 - Databricks SQL (one shared serverless SQL Warehouse)
 - Azure Synapse Serverless SQL
 - Auto Loader + Structured Streaming (near-real-time sensors)
@@ -90,12 +89,12 @@ Rules:
    - **ADF = batch ingestion only** (Landing → Bronze, Copy Activity). ADF is
      **not** a "CSV → Delta transformation" engine; Databricks/Spark owns
      transformation.
-   - **dbt owns Silver → Gold.** Do not duplicate Spark transformation logic in
-     dbt unnecessarily.
-   - **Streaming does NOT go through ADF, dbt, Gold, or Synapse.** This
+   - **Spark owns Silver → Gold.** Do not duplicate Bronze → Silver
+     transformation logic in the Silver → Gold job.
+   - **Streaming does NOT go through ADF, Gold, or Synapse.** This
      separation is intentional.
-   - Use **ONE shared serverless Databricks SQL Warehouse** for both dbt
-     execution and live sensor serving. Do not create separate warehouses.
+   - Use **ONE shared serverless Databricks SQL Warehouse** for live sensor
+     serving. Do not create separate warehouses.
 4. Keep the implementation practical and achievable as a **one-day portfolio
    project**. Prefer simple, working solutions over elaborate ones.
 
@@ -176,7 +175,7 @@ When a phase finishes, record evidence in `IMPLEMENTATION_PLAN.md`, such as:
 - Databricks job/cluster run IDs and status.
 - Counts of rows/files written per layer (Landing, Bronze, Silver, Gold).
 - Data Quality check results (pass/fail, checks executed).
-- dbt run/test results.
+- Spark Silver → Gold run results.
 - Synapse query results proving Gold is servable.
 - Streaming proof (checkpoint location on ADLS, live rows visible via
   Databricks SQL).
@@ -204,16 +203,15 @@ A task is only "done" when:
 **Batch:**
 Simulated sources → Python generators → `upload_to_adls.py` → ADLS **LANDING**
 → **ADF** (batch ingestion) → ADLS **BRONZE** (Delta) → **Databricks Spark** →
-ADLS **SILVER** (Delta) → **DQ checks** (gate) → **dbt-databricks** →
-**Databricks SQL Warehouse** → ADLS **GOLD** (Delta) → **Synapse Serverless SQL**
-→ **Streamlit**
+ADLS **SILVER** (Delta) → **DQ checks** (gate) → **Databricks Spark** →
+ADLS **GOLD** (Delta) → **Synapse Serverless SQL** → **Streamlit**
 
 **Streaming:**
 Live sensor simulator → ADLS **INCOMING** → **Auto Loader** →
 **Structured Streaming** → **Live Bronze Delta** → **Live Silver Delta** →
 **Databricks SQL** → **Streamlit**
 
-(Streaming bypasses ADF, dbt, Gold, and Synapse — intentionally.)
+(Streaming bypasses ADF, Gold, and Synapse — intentionally.)
 
 **Orchestration:** Databricks Workflows → trigger ADF (via ADF REST API) →
-poll/wait → Spark → DQ → dbt → Gold.
+poll/wait → Spark → DQ → Spark → Gold.

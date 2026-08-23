@@ -6,7 +6,7 @@
 
 **Implementation:** IN PROGRESS — Phase 0, Phase 1, Phase 2, Phase 3, and Phase 4 complete (Phase 2 delivered as ADF Copy Landing → Bronze **file** ingestion; Phase 3 delivered as Databricks Spark Bronze CSV → Silver Delta; Phase 4 delivered as the Databricks Serverless Silver **Data Quality gate**; see Phase 2, Phase 3, and Phase 4 Evidence)
 
-**Current phase:** Phase 5 — dbt Silver → Gold
+**Current phase:** Phase 5 — Databricks Spark Silver → Gold
 
 > **Phase 2 design revision (human-approved).** The original Phase 2 design
 > wrote Bronze as Databricks **Delta** tables through a Databricks-linked ADF
@@ -691,47 +691,70 @@ were introduced (out of scope for Phase 4).
 
 ---
 
-## Phase 5 — dbt Silver → Gold
+## Phase 5 — Databricks Spark Silver → Gold
 
 **Status:** NOT STARTED
 
 **Objective**
-Implement the dbt-databricks project that models Silver data into
-**business-ready Gold marts** (staging → intermediate → marts), executed on the
-one shared serverless SQL Warehouse, writing Gold Delta on ADLS.
+Implement the Databricks Spark batch transformation that takes DQ-verified
+Silver Delta datasets and produces **analytics-ready Gold Delta** datasets on
+ADLS.
 
 **Files involved**
-- `dbt_plantation/` (`dbt_project.yml`, `profiles.yml`, `models/staging/`,
-  `models/intermediate/`, `models/marts/`, tests, docs)
+- `databricks/batch/silver_to_gold.py`
+- `tests/test_gold_transformations.py`
 
 **Azure services involved**
-- Databricks SQL (ONE shared serverless SQL Warehouse — dbt execution backend)
+- Azure Databricks (compute)
 - ADLS Gen2 (Silver input, Gold output)
 
+**Implementation design (conceptual)**
+- Read DQ-verified Silver Delta datasets from ADLS.
+- Perform business-level joins/aggregations to create analytics-ready Gold
+  datasets.
+- Write Gold as Delta on ADLS.
+- Use the **same Unity Catalog / external-location authentication pattern**
+  already established in Phase 3 and Phase 4 (storage credential
+  `plantation_external_adls`). No storage keys, SAS tokens, PATs, or secrets.
+- Gold writes must be **idempotent**: prefer deterministic full-refresh
+  behavior (`mode=overwrite`, `overwriteSchema=true`), consistent with Phase 3.
+  Rerunning Phase 5 must **not** append duplicate Gold records.
+- Must be compatible with **Azure Databricks Serverless**.
+- Must **not** invent Gold schemas — the eventual Gold datasets must be derived
+  from the **actual** Silver schemas inspected during implementation.
+
+**Candidate Gold concepts** (candidates only — not final until Phase 5
+implementation inspects the actual Silver data and confirms they remain
+supported):
+- `dim_plantation`
+- `dim_equipment`
+- `dim_employee`
+- `fact_harvest`
+- `fact_revenue`
+- `fact_fertilizer`
+- `fact_equipment`
+
 **Implementation tasks**
-1. Configure dbt-databricks against the shared serverless SQL Warehouse.
-2. Build staging models from Silver tables.
-3. Build intermediate + marts models. Candidate marts (final set defined from
-   **actual** Silver data — do not assume exact schemas): `dim_plantation`,
-   `dim_equipment`, `dim_employee`, `fact_harvest`, `fact_revenue`,
-   `fact_fertilizer`, `fact_equipment`.
-4. Add dbt tests and generate documentation.
-5. Materialize Gold as Delta on ADLS.
-6. Do not duplicate Spark transformation logic — start from clean Silver.
+1. Implement `silver_to_gold.py` to read DQ-verified Silver Delta.
+2. Perform business-level joins/aggregations to build analytics-ready Gold
+   datasets from the **actual** Silver schemas.
+3. Write Gold as Delta on ADLS (idempotent overwrite).
+4. Verify Gold datasets are queryable.
 
 **Dependencies**
-- Phase 4 complete (DQ-verified Silver data).
+- Phase 4 complete (DQ-verified Silver data). The DQ gate must remain the
+  quality gate before Gold processing: PASS → Gold; FAIL → STOP.
 
 **Validation tasks**
-- `dbt run` and `dbt test` succeed (verified output).
-- Gold Delta tables/marts exist on ADLS and are queryable via the SQL
-  Warehouse.
+- Run the Spark job on Databricks; verify success.
+- Inspect Gold Delta datasets on ADLS; confirm they are analytics-ready and
+  idempotent (rerun produces no duplicates).
 
 **Completion criteria**
-- dbt run + tests pass; Gold marts verified queryable.
+- Gold Delta datasets exist on ADLS (verified) and are analytics-ready.
 
 **Evidence to record**
-- dbt run/test results; list of Gold models; row counts/sample queries.
+- Databricks run link/ID; list of Gold datasets; row counts/sample queries.
 
 **What NOT to implement yet**
 - No Synapse views, no streaming, no dashboard, no workflows.
@@ -824,7 +847,7 @@ with checkpoints on ADLS.
 
 **What NOT to implement yet**
 - No Databricks SQL serving views, no dashboard, no streaming workflow JSON
-  (Phase 9), no coupling of streaming to ADF/dbt/Gold/Synapse (intentionally
+  (Phase 9), no coupling of streaming to ADF/Gold/Synapse (intentionally
   excluded).
 
 ---
@@ -880,7 +903,7 @@ by the one shared serverless SQL Warehouse.
 
 **Objective**
 Orchestrate the platform with Databricks Workflows: a batch workflow that
-triggers ADF via REST, waits/polls, then runs Spark → DQ → dbt → Gold; and a
+triggers ADF via REST, waits/polls, then runs Spark → DQ → Spark → Gold; and a
 separate continuous streaming workflow.
 
 **Files involved**
@@ -897,10 +920,10 @@ separate continuous streaming workflow.
    terminal state), with secure credentials (service principal / env / Key
    Vault — never hard-coded).
 2. Define the batch workflow: trigger ADF → wait/poll → Spark Bronze→Silver →
-   DQ gate → dbt → Gold.
+   DQ gate → Spark Silver→Gold.
 3. Define the separate streaming workflow running `sensors_stream.py`
    continuously.
-4. Ensure critical DQ failure stops the batch workflow before dbt/Gold.
+4. Ensure critical DQ failure stops the batch workflow before Gold.
 
 **Dependencies**
 - Phases 2–5 complete (batch components exist) and Phase 7 complete
@@ -975,12 +998,12 @@ prepare the portfolio demo narrative.
 ---
 
 **Next action:**
-Phase 5 — dbt Silver → Gold. Phase 4 is complete: the Silver Data Quality gate
-(`databricks/batch/dq_checks.py`) ran live on Azure Databricks Serverless with
-**42/42 checks passed** across all six Silver datasets (48,595 rows total),
-Bronze/Silver reconciliation passed, and the gate returned exit code 0 —
-see Phase 4 Evidence. Critical-failure blocking (FAIL / downstream BLOCKED /
-exit 1) was independently proven without modifying production data. Phase 5
-builds the dbt-databricks project (`dbt_plantation/`) that models the
-DQ-verified Silver data into Gold marts on the one shared serverless SQL
-Warehouse.
+Phase 5 — Databricks Spark Silver → Gold. Phase 4 is complete: the Silver Data
+Quality gate (`databricks/batch/dq_checks.py`) ran live on Azure Databricks
+Serverless with **42/42 checks passed** across all six Silver datasets (48,595
+rows total), Bronze/Silver reconciliation passed, and the gate returned exit
+code 0 — see Phase 4 Evidence. Critical-failure blocking (FAIL / downstream
+BLOCKED / exit 1) was independently proven without modifying production data.
+Phase 5 implements a Databricks Spark batch transformation (`databricks/batch/silver_to_gold.py`)
+that reads the DQ-verified Silver Delta data and produces analytics-ready Gold
+Delta datasets on ADLS.

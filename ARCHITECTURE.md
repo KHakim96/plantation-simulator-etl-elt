@@ -12,12 +12,11 @@ The platform covers:
 - Simulated external data sources (Python generators writing files)
 - Azure Data Lake Storage Gen2 (ADLS Gen2) as the data lake
 - Azure Data Factory (ADF) for batch ingestion (Landing → Bronze)
-- Azure Databricks + Apache Spark for Bronze → Silver processing
+- Azure Databricks + Apache Spark for Bronze → Silver and Silver → Gold
+  processing
 - Delta Lake as the table/storage format (Bronze, Silver, Gold)
 - Data Quality gates before Gold
-- dbt-databricks for Silver → Gold business/analytical modeling
-- Databricks SQL (one shared serverless SQL Warehouse) for dbt execution and
-  live sensor serving
+- Databricks SQL (one shared serverless SQL Warehouse) for live sensor serving
 - Azure Synapse Serverless SQL for historical analytical serving
 - Auto Loader + Structured Streaming for live sensor data
 - Databricks Workflows for batch orchestration
@@ -68,6 +67,7 @@ flowchart TD
 
     subgraph DBX["Azure Databricks"]
         SPARK["Spark batch<br/>bronze_to_silver.py"]
+        SPARK_GOLD["Spark batch<br/>silver_to_gold.py"]
         DQ["Data Quality gate<br/>dq_checks.py"]
         AL["Auto Loader +<br/>Structured Streaming<br/>sensors_stream.py"]
         WF["Databricks Workflows<br/>plantation_batch.json<br/>sensor_streaming.json"]
@@ -75,7 +75,6 @@ flowchart TD
         DBSQL[("Databricks SQL<br/>ONE shared serverless<br/>SQL Warehouse")]
     end
 
-    DBT["dbt-databricks<br/>staging → intermediate → marts"]
     SYN["Azure Synapse<br/>Serverless SQL"]
     DASH["Streamlit Dashboard"]
 
@@ -87,9 +86,8 @@ flowchart TD
     BRZ --> SPARK
     SPARK --> SLV
     SLV --> DQ
-    DQ --> DBT
-    DBT <--> DBSQL
-    DBT --> GLD
+    DQ --> SPARK_GOLD
+    SPARK_GOLD --> GLD
     GLD --> SYN
     SYN --> DASH
 
@@ -107,7 +105,7 @@ flowchart TD
     ORCH -.REST trigger / poll.-> ADF
     WF -.runs.-> SPARK
     WF -.runs.-> DQ
-    WF -.runs.-> DBT
+    WF -.runs.-> SPARK_GOLD
     WF -.runs.-> AL
 ```
 
@@ -138,9 +136,7 @@ ADLS Gen2 SILVER — Delta
         ↓
 Data Quality checks (gate)
         ↓
-dbt-databricks (staging → intermediate → marts)
-        ↓
-Databricks SQL Warehouse (dbt execution backend)
+Azure Databricks Spark (Silver → Gold — business joins/aggregations)
         ↓
 ADLS Gen2 GOLD — Delta
         ↓
@@ -150,7 +146,7 @@ Streamlit Dashboard
 ```
 
 Batch is orchestrated by **Databricks Workflows**, which triggers ADF via the
-ADF REST API, waits/polls for completion, then runs Spark → DQ → dbt.
+ADF REST API, waits/polls for completion, then runs Spark → DQ → Spark.
 
 ---
 
@@ -174,7 +170,7 @@ Databricks SQL (live serving)
 Streamlit Dashboard
 ```
 
-Streaming **does NOT** go through Azure Data Factory, dbt, Gold, or Synapse.
+Streaming **does NOT** go through Azure Data Factory, Gold, or Synapse.
 This separation is intentional:
 
 - The streaming path is a lightweight near-real-time path for current sensor
@@ -276,8 +272,7 @@ Responsibilities:
 - transform
 - write Silver Delta
 
-Spark owns all heavy transformation in the batch path. dbt must not
-unnecessarily duplicate this logic.
+Spark owns all heavy transformation in the batch path.
 
 ---
 
@@ -285,7 +280,8 @@ unnecessarily duplicate this logic.
 
 - Delta tables on ADLS Gen2 written by the Spark batch job.
 - Cleaned, validated, deduplicated, standardized, conformed data.
-- Silver is the input to the Data Quality gate and to dbt.
+- Silver is the input to the Data Quality gate and to the Spark Silver → Gold
+  transformation.
 
 ---
 
@@ -304,30 +300,27 @@ during implementation, based on actual data):
 - valid range checks
 - Bronze/Silver reconciliation
 
-**Rule:** Critical DQ failures must **stop downstream processing** (dbt / Gold
-must not run on failed data).
+**Rule:** Critical DQ failures must **stop downstream processing** (Gold must
+not run on failed data).
 
 ---
 
-## 13. dbt
+## 13. Spark Silver → Gold
 
-Planned project: `dbt_plantation/` (placeholders exist, implementation PENDING)
+Planned file: `databricks/batch/silver_to_gold.py` (PENDING)
 
-```text
-dbt_plantation/
-models/
-├── staging/
-├── intermediate/
-└── marts/
-```
-
-- Adapter: **dbt-databricks**.
-- dbt owns: **Silver → Gold** (business transformations and analytical marts).
-- dbt provides: business transformations, analytical marts, **tests**, and
-  **documentation**.
-- dbt executes on the **one shared serverless Databricks SQL Warehouse**.
-- Do **not** duplicate Spark transformation logic unnecessarily in dbt — dbt
-  starts from clean Silver data.
+- Spark owns: **Silver → Gold** (business transformations and analytical
+  marts).
+- Spark provides: business-level joins, aggregations, and analytics-ready Gold
+  datasets written as Delta on ADLS.
+- The job runs on **Azure Databricks Serverless** using the same Unity
+  Catalog / external-location authentication pattern established in Phase 3
+  and Phase 4 (no storage keys, SAS tokens, PATs, or secrets).
+- Gold writes must be **idempotent** (deterministic full-refresh:
+  `mode=overwrite`, `overwriteSchema=true`). Rerunning must not append
+  duplicate Gold records.
+- The job starts from clean, DQ-verified Silver data — no duplication of the
+  Bronze → Silver transformation logic.
 
 ---
 
@@ -353,9 +346,8 @@ models/
 ## 15. Databricks SQL
 
 - **ONE shared serverless SQL Warehouse** is used.
-- It serves exactly two purposes:
-  1. **dbt execution backend** (Silver → Gold modeling)
-  2. **Live sensor serving** (queries over live Silver Delta for Streamlit)
+- It serves exactly one purpose:
+  1. **Live sensor serving** (queries over live Silver Delta for Streamlit)
 - Do **not** create unnecessary separate warehouses.
 - Planned supporting file: `databricks/sql/live_sensor_kpis.sql` (PENDING).
 
@@ -397,7 +389,7 @@ Two separate workflows:
 
 | Workflow | Planned file | Purpose |
 |---|---|---|
-| Batch | `databricks/workflows/plantation_batch.json` | Orchestrates the batch pipeline (trigger ADF → poll → Spark → DQ → dbt → Gold) |
+| Batch | `databricks/workflows/plantation_batch.json` | Orchestrates the batch pipeline (trigger ADF → poll → Spark → DQ → Spark → Gold) |
 | Streaming | `databricks/workflows/sensor_streaming.json` | Runs the continuous streaming job (`sensors_stream.py`) as a separate, long-running job |
 
 The streaming job is **separate from the batch workflow** — they have different
@@ -412,11 +404,11 @@ Trigger ADF
         ↓
 Wait / poll ADF
         ↓
-Databricks Spark
+Databricks Spark (Bronze → Silver)
         ↓
 DQ
         ↓
-dbt
+Databricks Spark (Silver → Gold)
         ↓
 Gold
 ```
@@ -465,11 +457,10 @@ Potential dashboard sections (indicative, refined during implementation):
 |---|---|
 | Azure Data Lake Storage Gen2 | Physical data lake storage (Landing, Incoming, Bronze, Silver, Gold, live Bronze/Silver, checkpoints) |
 | Azure Data Factory | Batch ingestion / Copy Activity (Landing → Bronze) |
-| Azure Databricks + Spark | Bronze → Silver processing (clean, validate, dedupe, standardize, transform) |
+| Azure Databricks + Spark | Bronze → Silver processing (clean, validate, dedupe, standardize, transform) and Silver → Gold business/analytical transformation |
 | Delta Lake | Table/storage format for Bronze, Silver, and Gold (and live Bronze/Silver) |
 | Data Quality | Validation gate before Gold |
-| dbt-databricks | Silver → Gold business/analytical modeling (+ tests, docs) |
-| Databricks SQL | dbt execution backend + live sensor serving (ONE shared serverless warehouse) |
+| Databricks SQL | Live sensor serving (ONE shared serverless warehouse) |
 | Azure Synapse Serverless SQL | Historical analytical serving over Gold |
 | Auto Loader | Incremental file discovery for streaming |
 | Structured Streaming | Live sensor processing |
@@ -486,7 +477,7 @@ Potential dashboard sections (indicative, refined during implementation):
 | Incoming | Raw sensor files | `generate_sensors.py` | Live sensor readings as arriving files |
 | Bronze | Delta on ADLS | ADF Copy Activity | Raw-fidelity copy of Landing |
 | Silver | Delta on ADLS | Databricks Spark | Cleaned, validated, deduplicated, standardized, conformed data |
-| Gold | Delta on ADLS | dbt-databricks | Business-ready analytical marts (dims + facts) |
+| Gold | Delta on ADLS | Databricks Spark | Business-ready analytical marts (dims + facts) |
 | Live Bronze | Delta on ADLS | Auto Loader + Structured Streaming | Raw-fidelity live sensor stream |
 | Live Silver | Delta on ADLS | Structured Streaming | Processed live sensor state/history |
 | Checkpoints | ADLS files | Structured Streaming | Stream recovery state (never in Git) |
@@ -503,17 +494,17 @@ Potential dashboard sections (indicative, refined during implementation):
 
 1. **Single responsibility per service** — each Azure service does one job (see
    the responsibility table). No overlap, no redundancy.
-2. **Ingestion ≠ transformation** — ADF ingests; Spark transforms; dbt models
+2. **Ingestion ≠ transformation** — ADF ingests; Spark transforms and models
    business logic. Each layer stays in its lane.
 3. **Delta everywhere it matters** — Bronze, Silver, Gold, and live layers are
    Delta on ADLS Gen2.
 4. **Quality gate before Gold** — bad data never reaches Gold or the dashboard.
-5. **One warehouse, two uses** — a single serverless Databricks SQL Warehouse
-   serves dbt execution and live serving.
+5. **One warehouse** — a single serverless Databricks SQL Warehouse serves
+   live sensor serving.
 6. **Serverless where possible** — Synapse Serverless SQL (no dedicated pool),
    serverless SQL Warehouse, minimal always-on infrastructure for cost control.
-7. **Batch and streaming are separate paths** — streaming bypasses ADF, dbt,
-   Gold, and Synapse by design.
+7. **Batch and streaming are separate paths** — streaming bypasses ADF, Gold,
+   and Synapse by design.
 8. **No invented detail** — schemas, configs, and resources are defined from
    inspected reality, not assumptions; unverified items stay PENDING.
 9. **Portfolio pragmatism** — the design must be achievable in approximately

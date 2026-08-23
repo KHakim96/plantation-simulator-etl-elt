@@ -5,8 +5,6 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
-dbt_plantation/target/
-dbt_plantation/logs/
 .databricks/
 data/raw/*
 data/landing/*

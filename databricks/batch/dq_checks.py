@@ -1,7 +1,7 @@
 """Phase 4: Data Quality gate for the six Silver Delta datasets.
 
 Validates the Silver layer produced by Phase 3 (``bronze_to_silver.py``) and
-acts as a **gate** before any downstream processing (dbt / Gold): any CRITICAL
+acts as a **gate** before any downstream processing (Gold): any CRITICAL
 check failure makes this program exit with code 1 so orchestration (Phase 9)
 can stop the pipeline. Non-critical issues are reported but do not block.
 
