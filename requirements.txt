@@ -17,5 +17,10 @@ python-dotenv
 pyspark>=3.5.0
 delta-spark>=3.2.0
 
+# Phase 8: Streamlit dashboard + serving connections
+streamlit
+databricks-sql-connector
+pyodbc
+
 # Testing
 pytest
