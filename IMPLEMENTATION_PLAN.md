@@ -4,9 +4,9 @@
 
 **Architecture:** FINAL / FROZEN (see `ARCHITECTURE.md`)
 
-**Implementation:** IN PROGRESS — Phase 0, Phase 1, Phase 2, and Phase 3 complete (Phase 2 delivered as ADF Copy Landing → Bronze **file** ingestion; Phase 3 delivered as Databricks Spark Bronze CSV → Silver Delta; see Phase 2 and Phase 3 Evidence)
+**Implementation:** IN PROGRESS — Phase 0, Phase 1, Phase 2, Phase 3, and Phase 4 complete (Phase 2 delivered as ADF Copy Landing → Bronze **file** ingestion; Phase 3 delivered as Databricks Spark Bronze CSV → Silver Delta; Phase 4 delivered as the Databricks Serverless Silver **Data Quality gate**; see Phase 2, Phase 3, and Phase 4 Evidence)
 
-**Current phase:** Phase 4 — Data Quality
+**Current phase:** Phase 5 — dbt Silver → Gold
 
 > **Phase 2 design revision (human-approved).** The original Phase 2 design
 > wrote Bronze as Databricks **Delta** tables through a Databricks-linked ADF
@@ -583,7 +583,7 @@ placeholders).
 
 ## Phase 4 — Data Quality
 
-**Status:** NOT STARTED
+**Status:** COMPLETE (see Phase 4 Evidence below)
 
 **Objective**
 Implement the Data Quality gate that validates Silver data and **stops
@@ -622,6 +622,72 @@ downstream processing on critical failures**.
 
 **What NOT to implement yet**
 - No dbt/Gold, no Synapse, no streaming, no dashboard, no workflows.
+
+### Phase 4 Evidence (recorded 2026-08-24, verified against real Azure)
+
+**Implementation:** `databricks/batch/dq_checks.py` (PySpark + Delta DQ gate)
++ `tests/test_data_quality.py`. The gate reuses the Phase 3 helpers
+(`detect_environment`, `get_spark_session`, `get_silver_path`,
+`get_bronze_path`, `SOURCE_ORDER`) — no ADLS auth logic duplicated. Storage
+authentication is **Unity Catalog external locations** backed by the storage
+credential `plantation_external_adls`. **No storage account key, no SAS token,
+no PAT, and no hard-coded secret** is read or configured
+(`fs.azure.account.key.*` is never set).
+
+**Checks implemented (all 7 from the plan), per source across all six Silver
+datasets (weather, harvest, fertilizer, equipment, hr, finance):**
+
+| # | Check | Type |
+|---|---|---|
+| 1 | schema (required columns incl. `_ingested_at`) | CRITICAL |
+| 2 | nulls (key columns) | CRITICAL |
+| 3 | duplicates (business-key uniqueness) | CRITICAL |
+| 4 | row counts (expected per-source counts; total 48,595) | CRITICAL |
+| 5 | freshness (newest `_ingested_at` within window) | NON-CRITICAL |
+| 6 | valid ranges (plausible measure bounds) | NON-CRITICAL |
+| 7 | Bronze/Silver reconciliation (Silver == Bronze distinct-key count) | CRITICAL |
+
+Critical checks (`schema`, `nulls`, `duplicates`, `row_count`,
+`reconciliation`) halt the pipeline on failure; non-critical checks
+(`valid_ranges`, `freshness`) are logged/reported but do not block. A critical
+failure returns exit code **1**; PASS returns **0**. The gate prints a
+human-readable per-check report (source | check | PASS/FAIL | detail) plus an
+overall result.
+
+**Live Databricks run — PASS (Azure Databricks Serverless, Spark Connect,
+Unity Catalog enabled):** `dq_checks.py` ran against the live Silver Delta on
+ADLS. **42/42 checks passed** (6 sources × 7 checks). **OVERALL RESULT:
+PASS**; process exit code **0**. All six Silver datasets passed all 7 checks;
+**Bronze/Silver reconciliation passed**; total Silver rows reconciled to
+**48,595**. (No Databricks run ID/URL is recorded here — it was not captured;
+execution was confirmed via the job's console output.)
+
+**Critical-failure blocking proof (no production data modified):** verified
+via the real `main()` with an injected critical `row_count` failure (no Spark /
+ADLS / Silver touched) and via automated tests
+(`test_evaluate_overall_blocks_only_on_critical`,
+`test_critical_noncritical_classification`). A critical failure produced
+**OVERALL RESULT: FAIL (downstream processing BLOCKED)** and **exit code 1**;
+a non-critical-only failure still produced PASS. Good data and bad data paths
+are both demonstrated.
+
+**Serverless compatibility fix:** the per-source `cache()`/`unpersist()` was
+removed because Spark Connect translates DataFrame caching into a `PERSIST
+TABLE` operation that Serverless rejects
+(`[NOT_SUPPORTED_WITH_SERVERLESS] PERSIST TABLE`). Each check is a plain
+DataFrame aggregation, so caching was unnecessary; correctness is unchanged. A
+guard test (`test_no_serverless_incompatible_persistence_calls`) locks this
+out. A separate fix made module loading `__file__`-independent so the script
+runs from the Git-backed Databricks workspace.
+
+**Tests:** `.venv/bin/python -m pytest tests/ -q` → **59 passed, 11 skipped**
+(55 from Phases 0–3 unchanged; 4 net new Phase 4 always-on tests — the DQ
+Spark-behavior tests skip locally because this workstation has no Java, and
+run on any Java-enabled runner). Ruff: clean on both changed files.
+
+**Phase boundary respected:** no dbt, Gold, Synapse, streaming, dashboard, or
+workflow logic was added; no DQ results Delta table and no Great Expectations
+were introduced (out of scope for Phase 4).
 
 ---
 
@@ -909,9 +975,12 @@ prepare the portfolio demo narrative.
 ---
 
 **Next action:**
-Phase 4 — Data Quality. Phase 3 is complete: Silver Delta tables for all six
-sources are verified live on ADLS
-(`abfss://silver@plantationsimulatorrg.dfs.core.windows.net/<source>`, 48,595
-rows total, 0 duplicates) — see Phase 3 Evidence. Phase 4 implements the DQ
-gate (`databricks/batch/dq_checks.py` + `tests/test_data_quality.py`) that
-validates Silver and stops downstream processing on critical failures.
+Phase 5 — dbt Silver → Gold. Phase 4 is complete: the Silver Data Quality gate
+(`databricks/batch/dq_checks.py`) ran live on Azure Databricks Serverless with
+**42/42 checks passed** across all six Silver datasets (48,595 rows total),
+Bronze/Silver reconciliation passed, and the gate returned exit code 0 —
+see Phase 4 Evidence. Critical-failure blocking (FAIL / downstream BLOCKED /
+exit 1) was independently proven without modifying production data. Phase 5
+builds the dbt-databricks project (`dbt_plantation/`) that models the
+DQ-verified Silver data into Gold marts on the one shared serverless SQL
+Warehouse.
