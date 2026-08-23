@@ -30,7 +30,16 @@ session, and ADLS path resolution are imported from ``bronze_to_silver``.
 from __future__ import annotations
 
 # Reuse the Phase 3 environment/path/session helpers and source ordering.
-# databricks/batch has no __init__.py, so import by module path.
+# databricks/batch has no __init__.py, so bronze_to_silver is imported as a
+# top-level module. Two loaders are tried in order:
+#   1. ``importlib.import_module`` — works on Databricks Serverless, where a
+#      Git-backed repo file executed in the same folder has its directory on
+#      ``sys.path`` (this is how Phase 3's bronze_to_silver.py itself runs).
+#      It does NOT rely on ``__file__``, which Databricks does not define.
+#   2. A file-relative load keyed off ``__file__`` — the local pytest path,
+#      where ``__file__`` is always defined. ``__file__`` is only evaluated
+#      inside this branch, so it is never touched on Databricks.
+import importlib
 import importlib.util
 import os
 import sys
@@ -38,14 +47,35 @@ import sys
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
-_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-_BTS_PATH = os.path.join(_THIS_DIR, "bronze_to_silver.py")
-_spec = importlib.util.spec_from_file_location("bronze_to_silver", _BTS_PATH)
-if _spec is None or _spec.loader is None:  # pragma: no cover - import guard
-    raise ImportError(f"Cannot load bronze_to_silver from {_BTS_PATH}")
-bts = importlib.util.module_from_spec(_spec)
-sys.modules["bronze_to_silver"] = bts
-_spec.loader.exec_module(bts)
+
+def _load_bronze_to_silver():
+    """Import bronze_to_silver without requiring ``__file__`` (Databricks-safe)."""
+    try:
+        return importlib.import_module("bronze_to_silver")
+    except ImportError:
+        pass
+    # Local fallback: resolve relative to this file. Guarded so ``__file__`` is
+    # only referenced when it actually exists (never on Databricks).
+    this_file = globals().get("__file__")
+    if this_file is None:
+        raise ImportError(
+            "Cannot import bronze_to_silver: it is not on sys.path and "
+            "__file__ is unavailable in this execution environment. Ensure the "
+            "script runs from the same directory as bronze_to_silver.py "
+            "(Databricks Git-backed folder) or on sys.path."
+        )
+    bts_path = os.path.join(os.path.dirname(os.path.abspath(this_file)),
+                            "bronze_to_silver.py")
+    spec = importlib.util.spec_from_file_location("bronze_to_silver", bts_path)
+    if spec is None or spec.loader is None:  # pragma: no cover - import guard
+        raise ImportError(f"Cannot load bronze_to_silver from {bts_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["bronze_to_silver"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+bts = _load_bronze_to_silver()
 
 detect_environment = bts.detect_environment
 get_spark_session = bts.get_spark_session
