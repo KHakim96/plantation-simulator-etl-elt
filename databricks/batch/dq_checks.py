@@ -403,13 +403,20 @@ def read_bronze_distinct_key_count(
 def run_dq_for_source(
     spark: SparkSession, source: str, env: str
 ) -> list[CheckResult]:
-    """Run all 7 checks for one source and return their results."""
+    """Run all 7 checks for one source and return their results.
+
+    No cache()/persist() is used: on Azure Databricks Serverless (Spark
+    Connect), DataFrame caching is translated to a ``PERSIST TABLE`` operation
+    that Serverless rejects with ``[NOT_SUPPORTED_WITH_SERVERLESS]``. Each
+    check below is a plain DataFrame aggregation/action, so the Silver Delta is
+    simply re-scanned per check — correct and Serverless-compatible at this
+    data scale.
+    """
     silver_df = read_silver(spark, source, env)
-    silver_df.cache()
 
     bronze_keys = read_bronze_distinct_key_count(spark, source, env)
 
-    results = [
+    return [
         check_schema(source, silver_df),
         check_nulls(source, silver_df),
         check_duplicates(source, silver_df),
@@ -418,8 +425,6 @@ def run_dq_for_source(
         check_freshness(source, silver_df),
         check_reconciliation(source, silver_df, bronze_keys),
     ]
-    silver_df.unpersist()
-    return results
 
 
 def evaluate_overall(results: list[CheckResult]) -> bool:

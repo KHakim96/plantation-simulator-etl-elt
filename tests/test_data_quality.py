@@ -174,6 +174,24 @@ def test_no_storage_key_sas_or_pat_in_dq_module():
     assert "SharedAccessSignature" not in code
 
 
+def test_no_serverless_incompatible_persistence_calls():
+    """Serverless (Spark Connect) rejects DataFrame cache/persist as
+    ``PERSIST TABLE``. The DQ gate must not use any persistence operation."""
+    code = _code_tokens_only(MODULE_PATH.read_text(encoding="utf-8"))
+    for forbidden in (
+        ".cache(",
+        ".persist(",
+        ".unpersist(",
+        "saveAsTable",
+        "createOrReplaceTempView",
+        "createTempView",
+        "PERSIST TABLE",
+    ):
+        assert forbidden not in code, (
+            f"Serverless-incompatible persistence call found: {forbidden}"
+        )
+
+
 def test_evaluate_overall_blocks_only_on_critical():
     # Critical failure -> overall FAIL
     bad = dq.CheckResult("weather", "row_count", False, True, "mismatch")
