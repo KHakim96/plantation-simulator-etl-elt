@@ -4,9 +4,9 @@
 
 **Architecture:** FINAL / FROZEN (see `ARCHITECTURE.md`)
 
-**Implementation:** IN PROGRESS — Phase 0, Phase 1, and Phase 2 complete (Phase 2 delivered as ADF Copy Landing → Bronze **file** ingestion; see Phase 2 Evidence)
+**Implementation:** IN PROGRESS — Phase 0, Phase 1, Phase 2, and Phase 3 complete (Phase 2 delivered as ADF Copy Landing → Bronze **file** ingestion; Phase 3 delivered as Databricks Spark Bronze CSV → Silver Delta; see Phase 2 and Phase 3 Evidence)
 
-**Current phase:** Phase 3 — Databricks Spark Bronze → Silver
+**Current phase:** Phase 4 — Data Quality
 
 > **Phase 2 design revision (human-approved).** The original Phase 2 design
 > wrote Bronze as Databricks **Delta** tables through a Databricks-linked ADF
@@ -466,7 +466,7 @@ still becomes Delta from Phase 3 onward, written by Spark).
 
 ## Phase 3 — Databricks Spark Bronze → Silver
 
-**Status:** NOT STARTED
+**Status:** COMPLETE (see Phase 3 Evidence below)
 
 **Objective**
 Implement the Spark batch job that reads the Bronze CSV files delivered by
@@ -516,6 +516,68 @@ validation / deduplication / standardization / transformation, and writes
 **What NOT to implement yet**
 - No DQ gate, no dbt, no Gold, no Synapse, no streaming, no dashboard, no
   workflows.
+
+### Phase 3 Evidence (recorded 2026-08-24, verified against real Azure)
+
+**Databricks execution — VERIFIED (Azure Databricks Serverless):**
+- `databricks/batch/bronze_to_silver.py` ran successfully on Azure Databricks
+  Serverless (Spark 4.1.0, Unity Catalog enabled). The job completed and
+  reported all six sources processed. (No Databricks run ID/URL is recorded
+  here — it was not captured; execution was confirmed via the job's console
+  output and the post-run Silver verification below.)
+- Storage authentication: **Unity Catalog external locations** backed by the
+  storage credential `plantation_external_adls`. **No storage account key, no
+  SAS token, no PAT, and no hard-coded secret** is read or configured anywhere
+  in the Databricks execution path (`fs.azure.account.key.*` is never set).
+
+**ADLS paths (deterministic):**
+- Bronze input: `abfss://bronze@plantationsimulatorrg.dfs.core.windows.net/<source>/<file>.csv`
+- Silver output: `abfss://silver@plantationsimulatorrg.dfs.core.windows.net/<source>`
+
+**Silver verification — FINAL RESULT: PASS (ALL SILVER DATASETS VERIFIED):**
+All six Silver datasets were read back from ADLS as **Delta** (each contains
+`_delta_log` + Parquet), carry the `_ingested_at` audit column, and have
+**0 duplicate rows**:
+
+| Source | Rows | Columns | Duplicates |
+|---|---|---|---|
+| weather | 6,483 | 10 | 0 |
+| harvest | 9,112 | 13 | 0 |
+| fertilizer | 9,000 | 15 | 0 |
+| equipment | 10,000 | 17 | 0 |
+| hr | 2,000 | 17 | 0 |
+| finance | 12,000 | 18 | 0 |
+| **TOTAL** | **48,595** | — | **0** |
+
+Row counts reconcile exactly with Bronze post-dedup expectations (48,595).
+
+**Schema / sample-row verification — VERIFIED:** Silver column types are
+correct, including timestamp and date casts, integer and double measures, the
+equipment `maintenance_flag` boolean, and finance `amount` as `decimal(18,2)`.
+IDs/categoricals are uppercased/trimmed (standardization) and blank strings are
+nullified per the transformation rules.
+
+**Idempotency / overwrite behavior:** Silver writes use `mode=overwrite` with
+`overwriteSchema=true` (deterministic full refresh), so reruns replace each
+Silver table rather than appending duplicates.
+
+**Tests:** `.venv/bin/python -m pytest tests/` → **55 passed** (41 from
+Phases 0–2 unchanged, 14 Phase 3 tests in `tests/test_transformations.py` —
+environment/path selection, no-silent-local-fallback, schema/registry coverage,
+a no-storage-key/SAS/PAT code guard, and four live local-Spark transformation
+tests).
+
+**Phase boundary respected:** no DQ gate, dbt, Gold, Synapse, streaming,
+dashboard, or workflow logic was added (all Phase 4+ files remain empty
+placeholders).
+
+**Resolved real issues encountered during Phase 3:**
+- `INVALID_HANDLE.SESSION_CLOSED` — a dead Spark Connect session on Serverless
+  (infrastructure, not a pipeline/code failure); resolved by reconnecting
+  Serverless, after which the pipeline completed with 48,595 rows.
+- A `SystemExit(0)` from the `__main__` block caused the Databricks editor to
+  mark a successful run as failed; fixed by calling `main()` directly (commit
+  `f2481ab`).
 
 ---
 
@@ -847,13 +909,9 @@ prepare the portfolio demo narrative.
 ---
 
 **Next action:**
-Phase 3 — Databricks Spark Bronze → Silver. Bronze is now verified live as
-**file-based CSV** (`bronze/<source>/<file>.csv`, 48,595 rows total, MD5-
-identical to Landing), so Phase 3's `bronze_to_silver.py` must read the CSV
-Bronze (e.g. Spark CSV read with header) rather than Bronze Delta tables.
-Delta Lake remains the target format for Silver (and, via Phase 3+
-processing, Bronze's analytical successor), per ARCHITECTURE.md. Before Phase 3
-work: confirm the Databricks workspace can provision compute. The Phase 2
-deviation (Bronze = CSV files written by ADF in Phase 2; Delta introduced
-from Phase 3 onward) is **already human-approved and recorded** in
-ARCHITECTURE.md §9/§22 — no further architecture action is pending.
+Phase 4 — Data Quality. Phase 3 is complete: Silver Delta tables for all six
+sources are verified live on ADLS
+(`abfss://silver@plantationsimulatorrg.dfs.core.windows.net/<source>`, 48,595
+rows total, 0 duplicates) — see Phase 3 Evidence. Phase 4 implements the DQ
+gate (`databricks/batch/dq_checks.py` + `tests/test_data_quality.py`) that
+validates Silver and stops downstream processing on critical failures.
