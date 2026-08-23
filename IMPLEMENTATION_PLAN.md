@@ -4,9 +4,9 @@
 
 **Architecture:** FINAL / FROZEN (see `ARCHITECTURE.md`)
 
-**Implementation:** IN PROGRESS — Phase 0, Phase 1, Phase 2, Phase 3, Phase 4, and Phase 5 complete (Phase 2 delivered as ADF Copy Landing → Bronze **file** ingestion; Phase 3 delivered as Databricks Spark Bronze CSV → Silver Delta; Phase 4 delivered as the Databricks Serverless Silver **Data Quality gate**; Phase 5 delivered as Databricks Spark Silver → Gold Delta; see Phase 2, Phase 3, Phase 4, and Phase 5 Evidence)
+**Implementation:** IN PROGRESS — Phase 0, Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, and Phase 6 complete (Phase 2 delivered as ADF Copy Landing → Bronze **file** ingestion; Phase 3 delivered as Databricks Spark Bronze CSV → Silver Delta; Phase 4 delivered as the Databricks Serverless Silver **Data Quality gate**; Phase 5 delivered as Databricks Spark Silver → Gold Delta; Phase 6 delivered as Azure Synapse Serverless SQL historical serving over Gold Delta; see Phase 2, Phase 3, Phase 4, Phase 5, and Phase 6 Evidence)
 
-**Current phase:** Phase 6 — Synapse Historical Serving
+**Current phase:** Phase 7 — Live Sensor Streaming
 
 > **Phase 2 design revision (human-approved).** The original Phase 2 design
 > wrote Bronze as Databricks **Delta** tables through a Databricks-linked ADF
@@ -824,7 +824,7 @@ logic was added. No dbt was reintroduced.
 
 ## Phase 6 — Synapse Historical Serving
 
-**Status:** NOT STARTED
+**Status:** COMPLETE (see Phase 6 Evidence below)
 
 **Objective**
 Expose Gold Delta through **Azure Synapse Serverless SQL** as the historical
@@ -860,6 +860,68 @@ analytical serving layer for the dashboard.
 
 **What NOT to implement yet**
 - No dashboard, no streaming, no workflows.
+
+### Phase 6 Evidence (recorded 2026-08-24, verified against real Azure)
+
+**Environment (verified):**
+- Synapse workspace: `plantation-simulator-synapse`
+- Serverless SQL endpoint: `plantation-simulator-synapse.sql.azuresynapse.net`
+- SQL pool used: **Built-in / Serverless** (no dedicated pool)
+- Database: `plantation_gold` (collation `Latin1_General_100_BIN2_UTF8`)
+- Schema: `gold`
+- ADLS Gold container: `abfss://gold@plantationsimulatorrg.dfs.core.windows.net/`
+- Access: Synapse workspace **managed identity** — the workspace identity has
+  **Storage Blob Data Contributor** on storage account `plantationsimulatorrg`.
+  No storage account key, SAS token, PAT, or secret was used.
+- A database master key was required in `plantation_gold` and was successfully
+  created.
+
+**Deployment:** `synapse/sql/external_tables.sql` executed successfully, then
+`synapse/sql/plantation_views.sql` executed successfully, on the serverless
+endpoint.
+
+**Objects verified (12):**
+- 6 base external objects over `OPENROWSET(... FORMAT='DELTA')` on the Gold
+  container via the `GoldAdls` external data source (managed-identity
+  credential `SynapseIdentity`):
+  `gold.ext_dim_equipment`, `gold.ext_dim_employee`, `gold.ext_fact_harvest`,
+  `gold.ext_fact_revenue`, `gold.ext_fact_fertilizer`, `gold.ext_fact_equipment`.
+- 6 serving views:
+  `gold.vw_dim_equipment`, `gold.vw_dim_employee`, `gold.vw_fact_harvest`,
+  `gold.vw_fact_revenue`, `gold.vw_fact_fertilizer`, `gold.vw_fact_equipment`.
+
+**Gold row-count verification (all matched the Phase 5 verified Gold output):**
+
+| Gold dataset | Rows |
+|---|---|
+| dim_equipment | 30 |
+| dim_employee | 24 |
+| fact_harvest | 9,112 |
+| fact_revenue | 12,000 |
+| fact_fertilizer | 9,000 |
+| fact_equipment | 10,000 |
+| **TOTAL** | **40,166** |
+
+**Business-key verification:**
+- `fact_harvest`: 0 duplicate business keys, 0 null business keys.
+- `fact_revenue`: business grain is the composite key
+  `(document_id, debit_credit_indicator, gl_account)` — 12,000 total rows,
+  12,000 distinct composite business keys, 0 duplicate business keys, 0 null
+  business keys. (An initial generic check counting `document_id` alone showed
+  6,000 apparent duplicates; this was **not** a data-quality failure. The
+  Phase 5 grain is the composite key, and the corrected composite-key
+  verification returned 0 duplicates / 0 nulls.)
+- `fact_fertilizer`: 0 duplicate business keys, 0 null business keys.
+- `fact_equipment`: 0 duplicate business keys, 0 null business keys.
+
+**Analytical serving verification:** a live Synapse Serverless analytical query
+against `gold.vw_fact_harvest` executed successfully (`GROUP BY crop_type`,
+`COUNT_BIG(*)`, `SUM(harvested_weight_kg)`, `ORDER BY total_kg DESC`) and
+returned results for OIL PALM, RUBBER, TEA, and COFFEE.
+
+**Phase boundary respected:** no dashboard, streaming, or workflow logic was
+added. No code outside `synapse/sql/` was introduced; Phase 0–5 implementation
+and evidence are unchanged.
 
 ---
 
@@ -1059,11 +1121,15 @@ prepare the portfolio demo narrative.
 ---
 
 **Next action:**
-Phase 6 — Synapse Historical Serving. Phase 5 is complete: the Databricks Spark
-Silver → Gold transformation (`databricks/batch/silver_to_gold.py`) ran live on
-Azure Databricks Serverless and produced six verified Gold Delta datasets
-(40,166 rows total: dim_equipment 30, dim_employee 24, fact_harvest 9,112,
-fact_revenue 12,000, fact_fertilizer 9,000, fact_equipment 10,000) with zero
-duplicate/null business keys, verified idempotent across two runs — see Phase 5
-Evidence. Phase 6 exposes the Gold Delta datasets through Azure Synapse
-Serverless SQL as the historical analytical serving layer.
+Phase 7 — Live Sensor Streaming. Phase 6 is complete: the six Gold Delta
+datasets are exposed through Azure Synapse Serverless SQL (built-in serverless
+endpoint, no dedicated pool) as twelve verified objects — six base external
+objects (`gold.ext_<model>` over `OPENROWSET(... FORMAT='DELTA')` on the Gold
+container, managed-identity access) and six serving views (`gold.vw_<model>`).
+Row counts match the Phase 5 verified Gold output exactly (40,166 total:
+dim_equipment 30, dim_employee 24, fact_harvest 9,112, fact_revenue 12,000,
+fact_fertilizer 9,000, fact_equipment 10,000), with zero duplicate/null
+business keys and a verified live analytical query — see Phase 6 Evidence.
+Phase 7 implements the near-real-time sensor path: sensor simulator → ADLS
+Incoming → Auto Loader → Structured Streaming → live Bronze Delta → live
+Silver Delta, with checkpoints on ADLS.
