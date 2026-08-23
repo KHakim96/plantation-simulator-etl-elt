@@ -1,0 +1,39 @@
+{
+	"name": "DS_Landing_Source",
+	"properties": {
+		"linkedServiceName": {
+			"referenceName": "LS_Adls_PlantationSimulator",
+			"type": "LinkedServiceReference"
+		},
+		"parameters": {
+			"SourceContainer": {
+				"type": "String",
+				"defaultValue": "landing"
+			},
+			"SourceFolder": {
+				"type": "String"
+			}
+		},
+		"annotations": [],
+		"type": "DelimitedText",
+		"typeProperties": {
+			"location": {
+				"type": "AzureBlobFSLocation",
+				"folderPath": {
+					"value": "@dataset().SourceFolder",
+					"type": "Expression"
+				},
+				"fileSystem": {
+					"value": "@dataset().SourceContainer",
+					"type": "Expression"
+				}
+			},
+			"columnDelimiter": ",",
+			"encodingName": "UTF-8",
+			"quoteChar": "\"",
+			"escapeChar": "\\",
+			"firstRowAsHeader": true
+		},
+		"schema": []
+	}
+}

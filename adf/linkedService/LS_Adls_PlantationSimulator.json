@@ -1,0 +1,10 @@
+{
+	"name": "LS_Adls_PlantationSimulator",
+	"properties": {
+		"annotations": [],
+		"type": "AzureBlobFS",
+		"typeProperties": {
+			"url": "https://plantationsimulatorrg.dfs.core.windows.net"
+		}
+	}
+}

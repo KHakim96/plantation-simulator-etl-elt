@@ -1,0 +1,183 @@
+# =============================================================================
+# Master configuration for plantation source-data generators (Phase 1).
+#
+# Every key below is consumed by the existing generator code. Keys were derived
+# by inspecting data_generators/*.py — do not rename sections without updating
+# the generators.
+#
+# Cost / trial note: volumes are intentionally modest (see AGENTS.md §7). The
+# generation window is a single quarter so the full batch produces small CSVs
+# suitable for an Azure trial / portfolio demo.
+# =============================================================================
+
+global_settings:
+  random_seed: 42
+  generation_period:
+    # Short window keeps total row counts small for trial/portfolio use.
+    start_date: "2024-01-01"
+    end_date: "2024-03-31"
+
+output_settings:
+  # Local simulation scratch only. upload_to_adls.py reads from these paths and
+  # delivers to ADLS Landing. Never commit generated CSVs (see .gitignore).
+  output_paths:
+    weather: "data/raw/weather"
+    harvest: "data/raw/harvest"
+    fertilizer: "data/raw/fertilizer"
+    equipment: "data/raw/equipment"
+    hr: "data/raw/hr"
+    finance: "data/raw/finance"
+    sensors: "data/raw/sensors"      # Phase 7 only — not used by the Phase 1 batch
+
+# Target row counts per dataset. Modest sizes for an Azure trial.
+# NOTE on hr: the HR generator emits at most one record per (employee, calendar
+# day) and skips most weekends, so its output is structurally capped at
+# 24 employees x 91 days = 2,184 rows for this window. The target below is
+# therefore a reachable value; do NOT raise it above the calendar cap.
+dataset_sizes:
+  harvest: 12000
+  fertilizer: 9000
+  equipment: 10000
+  hr: 2000
+  finance: 12000
+  sensors: 20000                    # Phase 7 only
+
+generator_settings:
+  weather_api:
+    # Live mode is DISABLED for the batch pipeline: no API key is set and
+    # fallback_to_mock is true, so the deterministic mock generator runs.
+    api_key_env_var: "OPENWEATHER_API_KEY"
+    endpoint: "https://api.openweathermap.org/data/2.5/weather"
+    fallback_to_mock: true
+  sensor_interval_minutes: 15       # Phase 7 only
+  randomization:                    # Phase 7 only (sensor anomaly/missing injection)
+    anomaly_rate: 0.05
+    missing_data_rate: 0.01
+
+# --- Reference / master data -------------------------------------------------
+
+# One weather station per region. region_id links weather to blocks/cost centers.
+weather_stations:
+  - station_id: "STN-NORTH"
+    region_id: "REG-NORTH"
+    latitude: 5.6417
+    longitude: 100.4894
+  - station_id: "STN-CENTRAL"
+    region_id: "REG-CENTRAL"
+    latitude: 3.1390
+    longitude: 101.6869
+  - station_id: "STN-SOUTH"
+    region_id: "REG-SOUTH"
+    latitude: 1.4927
+    longitude: 103.7414
+
+# Crop reference data. name is the join key from blocks.crop_type.
+crop_types:
+  - name: "Oil Palm"
+    target_yield_per_ha_ton: 22.0
+    optimal_moisture_pct: [60, 85]
+    optimal_temp_c: [24, 32]
+  - name: "Rubber"
+    target_yield_per_ha_ton: 8.0
+    optimal_moisture_pct: [55, 80]
+    optimal_temp_c: [23, 31]
+  - name: "Tea"
+    target_yield_per_ha_ton: 4.0
+    optimal_moisture_pct: [50, 75]
+    optimal_temp_c: [18, 26]
+  - name: "Coffee"
+    target_yield_per_ha_ton: 3.0
+    optimal_moisture_pct: [50, 75]
+    optimal_temp_c: [18, 27]
+
+# Plantation blocks. id is referenced across harvest/fertilizer/equipment.
+# Note: generate_sensors.py gives 2 sensors to BLK01/BLK05/BLK06/BLK10, so those
+# IDs exist here to keep that (Phase 7) behavior meaningful.
+blocks:
+  - {id: "BLK01", crop_type: "Oil Palm", area_ha: 120.0, region_id: "REG-NORTH"}
+  - {id: "BLK02", crop_type: "Oil Palm", area_ha: 95.0,  region_id: "REG-NORTH"}
+  - {id: "BLK03", crop_type: "Rubber",   area_ha: 80.0,  region_id: "REG-NORTH"}
+  - {id: "BLK04", crop_type: "Tea",      area_ha: 45.0,  region_id: "REG-CENTRAL"}
+  - {id: "BLK05", crop_type: "Oil Palm", area_ha: 110.0, region_id: "REG-CENTRAL"}
+  - {id: "BLK06", crop_type: "Coffee",   area_ha: 60.0,  region_id: "REG-CENTRAL"}
+  - {id: "BLK07", crop_type: "Rubber",   area_ha: 75.0,  region_id: "REG-SOUTH"}
+  - {id: "BLK08", crop_type: "Oil Palm", area_ha: 100.0, region_id: "REG-SOUTH"}
+  - {id: "BLK09", crop_type: "Tea",      area_ha: 40.0,  region_id: "REG-SOUTH"}
+  - {id: "BLK10", crop_type: "Oil Palm", area_ha: 130.0, region_id: "REG-SOUTH"}
+
+# Equipment fleet. type drives operator mapping, fuel burn and harvest suitability.
+equipment_master:
+  - {id: "EQP001", type: "Tractor"}
+  - {id: "EQP002", type: "Tractor"}
+  - {id: "EQP003", type: "Harvester"}
+  - {id: "EQP004", type: "Harvester"}
+  - {id: "EQP005", type: "Sprayer"}
+  - {id: "EQP006", type: "Sprayer"}
+  - {id: "EQP007", type: "Truck"}
+  - {id: "EQP008", type: "Truck"}
+  - {id: "EQP009", type: "Excavator"}
+  - {id: "EQP010", type: "Drone"}
+  - {id: "EQP011", type: "Drone"}
+  - {id: "EQP012", type: "Pickup Vehicle"}
+  - {id: "EQP013", type: "Tractor"}
+  - {id: "EQP014", type: "Truck"}
+  - {id: "EQP015", type: "Sprayer"}
+  - {id: "EQP016", type: "Harvester"}
+  - {id: "EQP017", type: "Excavator"}
+  - {id: "EQP018", type: "Pickup Vehicle"}
+  - {id: "EQP019", type: "Tractor"}
+  - {id: "EQP020", type: "Truck"}
+  - {id: "EQP021", type: "Sprayer"}
+  - {id: "EQP022", type: "Drone"}
+  - {id: "EQP023", type: "Tractor"}
+  - {id: "EQP024", type: "Harvester"}
+  - {id: "EQP025", type: "Truck"}
+  - {id: "EQP026", type: "Excavator"}
+  - {id: "EQP027", type: "Pickup Vehicle"}
+  - {id: "EQP028", type: "Tractor"}
+  - {id: "EQP029", type: "Sprayer"}
+  - {id: "EQP030", type: "Truck"}
+
+# Materials. MAT01..MAT03 are fertilizer (fertilizer generator also selects
+# category == "Fertilizer"). standard_cost feeds SAP finance material valuation.
+materials:
+  - {id: "MAT01", category: "Fertilizer", standard_cost: 2.80}
+  - {id: "MAT02", category: "Fertilizer", standard_cost: 3.40}
+  - {id: "MAT03", category: "Fertilizer", standard_cost: 2.50}
+  - {id: "MAT04", category: "Fuel",       standard_cost: 1.20}
+  - {id: "MAT05", category: "Pesticide",  standard_cost: 6.75}
+
+# Cost centres, one per region. SAP finance maps region -> cost centre.
+cost_centers:
+  - {id: "CC101", region_id: "REG-NORTH"}
+  - {id: "CC102", region_id: "REG-CENTRAL"}
+  - {id: "CC103", region_id: "REG-SOUTH"}
+  - {id: "CC201", region_id: "REG-CENTRAL"}   # fleet / equipment cost centre (hard-coded in finance)
+
+# Employee master. Roles drive harvest/fertilizer/equipment operator selection
+# and HR shift assignment. 24 employees (EMP001..EMP024) span all required roles.
+employee_master:
+  - {id: "EMP001", name: "Ahmad Razif",    role: "Harvester",             department: "Field Operations", cost_center_id: "CC101"}
+  - {id: "EMP002", name: "Suresh Kumar",   role: "Harvester",             department: "Field Operations", cost_center_id: "CC101"}
+  - {id: "EMP003", name: "Mei Lin",        role: "Senior Harvester",      department: "Field Operations", cost_center_id: "CC101"}
+  - {id: "EMP004", name: "Farid Hassan",   role: "Harvester",             department: "Field Operations", cost_center_id: "CC102"}
+  - {id: "EMP005", name: "Anita Devi",     role: "Harvester",             department: "Field Operations", cost_center_id: "CC102"}
+  - {id: "EMP006", name: "Wei Ming",       role: "Senior Harvester",      department: "Field Operations", cost_center_id: "CC103"}
+  - {id: "EMP007", name: "Roslan Aziz",    role: "Tractor Operator",      department: "Field Operations", cost_center_id: "CC101"}
+  - {id: "EMP008", name: "Kumar Selvan",   role: "Tractor Operator",      department: "Field Operations", cost_center_id: "CC102"}
+  - {id: "EMP009", name: "Li Na",          role: "Tractor Operator",      department: "Field Operations", cost_center_id: "CC103"}
+  - {id: "EMP010", name: "Hafiz Osman",    role: "Tractor Operator",      department: "Field Operations", cost_center_id: "CC101"}
+  - {id: "EMP011", name: "Priya Nair",     role: "Fertilizer Applicator", department: "Field Operations", cost_center_id: "CC102"}
+  - {id: "EMP012", name: "Jun Hao",        role: "Fertilizer Applicator", department: "Field Operations", cost_center_id: "CC103"}
+  - {id: "EMP013", name: "Zainab Ali",     role: "Fertilizer Applicator", department: "Field Operations", cost_center_id: "CC101"}
+  - {id: "EMP014", name: "Ravi Chandran",  role: "Agronomist",            department: "Field Operations", cost_center_id: "CC102"}
+  - {id: "EMP015", name: "Siti Nurhaliza", role: "Agronomist",            department: "Field Operations", cost_center_id: "CC103"}
+  - {id: "EMP016", name: "Daniel Tan",     role: "Field Supervisor",      department: "Field Operations", cost_center_id: "CC101"}
+  - {id: "EMP017", name: "Aisyah Rahman",  role: "Field Supervisor",      department: "Field Operations", cost_center_id: "CC102"}
+  - {id: "EMP018", name: "Vikram Singh",   role: "Driver",                department: "Logistics",        cost_center_id: "CC103"}
+  - {id: "EMP019", name: "Nurul Izzah",    role: "Driver",                department: "Logistics",        cost_center_id: "CC101"}
+  - {id: "EMP020", name: "Kevin Wong",     role: "Driver",                department: "Logistics",        cost_center_id: "CC102"}
+  - {id: "EMP021", name: "Lakshmi Menon",  role: "Maintenance Technician",department: "Engineering",      cost_center_id: "CC201"}
+  - {id: "EMP022", name: "Azlan Shah",     role: "Maintenance Technician",department: "Engineering",      cost_center_id: "CC201"}
+  - {id: "EMP023", name: "Grace Lim",      role: "Quality Inspector",     department: "Quality Assurance",cost_center_id: "CC103"}
+  - {id: "EMP024", name: "Hassan Ibrahim", role: "Quality Inspector",     department: "Quality Assurance",cost_center_id: "CC101"}

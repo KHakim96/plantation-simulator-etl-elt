@@ -1,0 +1,21 @@
+# Data generation
+pandas
+numpy
+pyyaml
+
+# HTTP / weather API
+requests
+
+# Azure ADLS Gen2
+azure-storage-blob
+azure-identity
+
+# Environment variables
+python-dotenv
+
+# Data processing (PySpark & Delta Lake)
+pyspark>=3.5.0
+delta-spark>=3.2.0
+
+# Testing
+pytest

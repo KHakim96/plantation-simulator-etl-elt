@@ -1,0 +1,119 @@
+{
+	"name": "PL_Ingest_Landing_To_Bronze",
+	"properties": {
+		"activities": [
+			{
+				"name": "ForEach_Landing_Source",
+				"type": "ForEach",
+				"dependsOn": [],
+				"userProperties": [],
+				"typeProperties": {
+					"isSequential": true,
+					"items": {
+						"value": "@pipeline().parameters.SourceItems",
+						"type": "Expression"
+					},
+					"activities": [
+						{
+							"name": "Copy_Landing_To_Bronze",
+							"type": "Copy",
+							"dependsOn": [],
+							"userProperties": [],
+							"policy": {
+								"timeout": "0.12:00:00",
+								"retry": 2,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"typeProperties": {
+								"source": {
+									"type": "DelimitedTextSource",
+									"storeSettings": {
+										"type": "AzureBlobFSReadSettings",
+										"recursive": false,
+										"wildcardFileName": "@item().sourceFile",
+										"deleteFilesAfterCompletion": false
+									}
+								},
+								"sink": {
+									"type": "DelimitedTextSink",
+									"formatSettings": {
+										"type": "DelimitedTextWriteSettings",
+										"fileExtension": ".csv"
+									},
+									"storeSettings": {
+										"type": "AzureBlobFSWriteSettings",
+										"copyBehavior": "Overwrite"
+									}
+								},
+								"enableStaging": false
+							},
+							"inputs": [
+								{
+									"referenceName": "DS_Landing_Source",
+									"type": "DatasetReference",
+									"parameters": {
+										"SourceContainer": "@pipeline().parameters.SourceContainer",
+										"SourceFolder": "@item().sourceFolder"
+									}
+								}
+							],
+							"outputs": [
+								{
+									"referenceName": "DS_Bronze_Sink",
+									"type": "DatasetReference",
+									"parameters": {
+										"SinkContainer": "@pipeline().parameters.SinkContainer",
+										"SinkFolder": "@item().sourceFolder",
+										"SinkFileName": "@item().sourceFile"
+									}
+								}
+							]
+						}
+					]
+				}
+			}
+		],
+		"parameters": {
+			"SourceContainer": {
+				"type": "String",
+				"defaultValue": "landing"
+			},
+			"SinkContainer": {
+				"type": "String",
+				"defaultValue": "bronze"
+			},
+			"SourceItems": {
+				"type": "Array",
+				"defaultValue": [
+					{
+						"sourceFolder": "weather",
+						"sourceFile": "weather_observations.csv"
+					},
+					{
+						"sourceFolder": "harvest",
+						"sourceFile": "harvest_transactions.csv"
+					},
+					{
+						"sourceFolder": "fertilizer",
+						"sourceFile": "fertilizer_applications.csv"
+					},
+					{
+						"sourceFolder": "equipment",
+						"sourceFile": "equipment_logs.csv"
+					},
+					{
+						"sourceFolder": "hr",
+						"sourceFile": "hr_attendance.csv"
+					},
+					{
+						"sourceFolder": "finance",
+						"sourceFile": "sap_finance_transactions.csv"
+					}
+				]
+			}
+		},
+		"annotations": []
+	}
+}
