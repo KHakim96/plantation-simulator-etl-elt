@@ -4,9 +4,9 @@
 
 **Architecture:** FINAL / FROZEN (see `ARCHITECTURE.md`)
 
-**Implementation:** IN PROGRESS — Phase 0, Phase 1, Phase 2, Phase 3, and Phase 4 complete (Phase 2 delivered as ADF Copy Landing → Bronze **file** ingestion; Phase 3 delivered as Databricks Spark Bronze CSV → Silver Delta; Phase 4 delivered as the Databricks Serverless Silver **Data Quality gate**; see Phase 2, Phase 3, and Phase 4 Evidence)
+**Implementation:** IN PROGRESS — Phase 0, Phase 1, Phase 2, Phase 3, Phase 4, and Phase 5 complete (Phase 2 delivered as ADF Copy Landing → Bronze **file** ingestion; Phase 3 delivered as Databricks Spark Bronze CSV → Silver Delta; Phase 4 delivered as the Databricks Serverless Silver **Data Quality gate**; Phase 5 delivered as Databricks Spark Silver → Gold Delta; see Phase 2, Phase 3, Phase 4, and Phase 5 Evidence)
 
-**Current phase:** Phase 5 — Databricks Spark Silver → Gold
+**Current phase:** Phase 6 — Synapse Historical Serving
 
 > **Phase 2 design revision (human-approved).** The original Phase 2 design
 > wrote Bronze as Databricks **Delta** tables through a Databricks-linked ADF
@@ -693,7 +693,7 @@ were introduced (out of scope for Phase 4).
 
 ## Phase 5 — Databricks Spark Silver → Gold
 
-**Status:** NOT STARTED
+**Status:** COMPLETE (see Phase 5 Evidence below)
 
 **Objective**
 Implement the Databricks Spark batch transformation that takes DQ-verified
@@ -758,6 +758,67 @@ supported):
 
 **What NOT to implement yet**
 - No Synapse views, no streaming, no dashboard, no workflows.
+
+### Phase 5 Evidence (recorded 2026-08-24, verified against real Azure)
+
+**Implementation:** `databricks/batch/silver_to_gold.py` (PySpark Silver →
+Gold transformation) + `tests/test_gold_transformations.py`. The job reuses
+the Phase 3 helpers (`detect_environment`, `get_spark_session`,
+`get_silver_path`, `is_databricks_environment`) — no ADLS auth logic
+duplicated. Storage authentication is **Unity Catalog external locations**
+backed by the storage credential `plantation_external_adls`. **No storage
+account key, no SAS token, no PAT, and no hard-coded secret** is read or
+configured (`fs.azure.account.key.*` is never set).
+
+**Gold models implemented (6):** `dim_plantation` was intentionally excluded —
+no plantation/block master table exists in Silver to build it from without
+fabricating data.
+
+| Gold Model | Type | Source Silver | Grain (Business Key) |
+|---|---|---|---|
+| `dim_equipment` | Dimension | equipment | `equipment_id` |
+| `dim_employee` | Dimension | hr | `employee_id` |
+| `fact_harvest` | Fact | harvest | `harvest_id` |
+| `fact_revenue` | Fact | finance | `(document_id, debit_credit_indicator, gl_account)` |
+| `fact_fertilizer` | Fact | fertilizer | `application_id` |
+| `fact_equipment` | Fact | equipment | `operation_id` |
+
+**Live Databricks run — PASS (Azure Databricks Serverless, Spark Connect,
+Unity Catalog enabled):** `silver_to_gold.py` ran against the live Silver
+Delta on ADLS and wrote six Gold Delta datasets to
+`abfss://gold@plantationsimulatorrg.dfs.core.windows.net/<model>`. (No
+Databricks run ID/URL is recorded here — it was not captured; execution was
+confirmed via the job's console output and the post-run Gold verification
+below.)
+
+**Gold verification — FINAL RESULT: PASS (ALL GOLD DATASETS VERIFIED):**
+All six Gold datasets were read back from ADLS as **Delta** (each contains
+`_delta_log` + Parquet), have **0 duplicate business keys** and **0 null
+business keys**, and match expected row counts exactly:
+
+| Gold Model | Rows | Expected | Duplicates | Null Keys |
+|---|---|---|---|---|
+| dim_equipment | 30 | 30 | 0 | 0 |
+| dim_employee | 24 | 24 | 0 | 0 |
+| fact_harvest | 9,112 | 9,112 | 0 | 0 |
+| fact_revenue | 12,000 | 12,000 | 0 | 0 |
+| fact_fertilizer | 9,000 | 9,000 | 0 | 0 |
+| fact_equipment | 10,000 | 10,000 | 0 | 0 |
+| **TOTAL** | **40,166** | **40,166** | **0** | **0** |
+
+**Idempotency — VERIFIED:** the complete `silver_to_gold.py` transformation
+was executed twice. Both runs produced identical row counts (40,166 total).
+Deterministic overwrite/full-refresh behavior (`mode=overwrite`,
+`overwriteSchema=true`) was verified — no row-count growth on rerun.
+
+**Tests:** `.venv/bin/python -m pytest tests/ -q` → **71 passed, 19 skipped**
+(59 from Phases 0–4 unchanged; 12 net new Phase 5 tests — 11 pure tests
+always run, 8 Spark-behavior tests skip locally because this workstation has
+no Java, and run on any Java-enabled runner). Ruff: clean on both changed
+files.
+
+**Phase boundary respected:** no Synapse, streaming, dashboard, or workflow
+logic was added. No dbt was reintroduced.
 
 ---
 
@@ -998,12 +1059,11 @@ prepare the portfolio demo narrative.
 ---
 
 **Next action:**
-Phase 5 — Databricks Spark Silver → Gold. Phase 4 is complete: the Silver Data
-Quality gate (`databricks/batch/dq_checks.py`) ran live on Azure Databricks
-Serverless with **42/42 checks passed** across all six Silver datasets (48,595
-rows total), Bronze/Silver reconciliation passed, and the gate returned exit
-code 0 — see Phase 4 Evidence. Critical-failure blocking (FAIL / downstream
-BLOCKED / exit 1) was independently proven without modifying production data.
-Phase 5 implements a Databricks Spark batch transformation (`databricks/batch/silver_to_gold.py`)
-that reads the DQ-verified Silver Delta data and produces analytics-ready Gold
-Delta datasets on ADLS.
+Phase 6 — Synapse Historical Serving. Phase 5 is complete: the Databricks Spark
+Silver → Gold transformation (`databricks/batch/silver_to_gold.py`) ran live on
+Azure Databricks Serverless and produced six verified Gold Delta datasets
+(40,166 rows total: dim_equipment 30, dim_employee 24, fact_harvest 9,112,
+fact_revenue 12,000, fact_fertilizer 9,000, fact_equipment 10,000) with zero
+duplicate/null business keys, verified idempotent across two runs — see Phase 5
+Evidence. Phase 6 exposes the Gold Delta datasets through Azure Synapse
+Serverless SQL as the historical analytical serving layer.
