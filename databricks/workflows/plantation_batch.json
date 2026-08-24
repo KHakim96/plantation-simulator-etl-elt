@@ -1,0 +1,74 @@
+{
+  "name": "plantation_batch",
+  "description": "Phase 9 batch orchestration: trigger ADF (REST) -> Bronze->Silver -> DQ gate -> Silver->Gold. Serverless, Git-source job. The DQ gate hard-blocks Gold: silver_to_gold depends on dq_checks and is skipped if DQ exits non-zero.",
+  "git_source": {
+    "git_url": "https://github.com/KHakim96/plantation-simulator-etl-elt.git",
+    "git_provider": "gitHub",
+    "git_branch": "main"
+  },
+  "tasks": [
+    {
+      "task_key": "trigger_adf",
+      "description": "Trigger PL_Ingest_Landing_To_Bronze via ADF REST and poll to a terminal state (Succeeded=0, else 1). SP credentials read from Databricks secret scope at runtime.",
+      "spark_python_task": {
+        "python_file": "databricks/orchestrator/trigger_adf.py"
+      },
+      "environment_key": "serverless"
+    },
+    {
+      "task_key": "bronze_to_silver",
+      "description": "Spark Bronze CSV -> Silver Delta (clean/validate/dedupe/standardize).",
+      "depends_on": [
+        { "task_key": "trigger_adf" }
+      ],
+      "spark_python_task": {
+        "python_file": "databricks/batch/bronze_to_silver.py"
+      },
+      "environment_key": "serverless"
+    },
+    {
+      "task_key": "dq_checks",
+      "description": "Data Quality gate over Silver. Exit 0 on PASS, 1 on any CRITICAL failure.",
+      "depends_on": [
+        { "task_key": "bronze_to_silver" }
+      ],
+      "spark_python_task": {
+        "python_file": "databricks/batch/dq_checks.py"
+      },
+      "environment_key": "serverless"
+    },
+    {
+      "task_key": "silver_to_gold",
+      "description": "Spark Silver -> Gold Delta (business joins/aggregations). Runs ONLY if dq_checks passed.",
+      "depends_on": [
+        { "task_key": "dq_checks" }
+      ],
+      "spark_python_task": {
+        "python_file": "databricks/batch/silver_to_gold.py"
+      },
+      "environment_key": "serverless"
+    }
+  ],
+  "environments": [
+    {
+      "environment_key": "serverless",
+      "spec": {
+        "client": "3",
+        "dependencies": [
+          "requests",
+          "azure-identity"
+        ]
+      }
+    }
+  ],
+  "performance_target": "PERFORMANCE_OPTIMIZED",
+  "queue": {
+    "enabled": true
+  },
+  "max_concurrent_runs": 1,
+  "tags": {
+    "project": "plantation-simulator-etl-elt",
+    "phase": "9",
+    "path": "batch"
+  }
+}
