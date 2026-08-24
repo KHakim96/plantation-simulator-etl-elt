@@ -4,9 +4,9 @@
 
 **Architecture:** FINAL / FROZEN (see `ARCHITECTURE.md`)
 
-**Implementation:** IN PROGRESS — Phase 0, Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, and Phase 8 complete (Phase 2 delivered as ADF Copy Landing → Bronze **file** ingestion; Phase 3 delivered as Databricks Spark Bronze CSV → Silver Delta; Phase 4 delivered as the Databricks Serverless Silver **Data Quality gate**; Phase 5 delivered as Databricks Spark Silver → Gold Delta; Phase 6 delivered as Azure Synapse Serverless SQL historical serving over Gold Delta; Phase 7 delivered as the Databricks Serverless **live sensor streaming path** (Auto Loader → live Bronze Delta → live Silver Delta) with checkpoints on ADLS; Phase 8 delivered as the **Streamlit Plantation Operations & Analytics dashboard** with historical serving via Synapse Serverless SQL over Gold and live sensor monitoring via Databricks SQL over live Silver; see Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, and Phase 8 Evidence)
+**Implementation:** IN PROGRESS — Phase 0, Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, and Phase 9 complete (Phase 2 delivered as ADF Copy Landing → Bronze **file** ingestion; Phase 3 delivered as Databricks Spark Bronze CSV → Silver Delta; Phase 4 delivered as the Databricks Serverless Silver **Data Quality gate**; Phase 5 delivered as Databricks Spark Silver → Gold Delta; Phase 6 delivered as Azure Synapse Serverless SQL historical serving over Gold Delta; Phase 7 delivered as the Databricks Serverless **live sensor streaming path** (Auto Loader → live Bronze Delta → live Silver Delta) with checkpoints on ADLS; Phase 8 delivered as the **Streamlit Plantation Operations & Analytics dashboard** with historical serving via Synapse Serverless SQL over Gold and live sensor monitoring via Databricks SQL over live Silver; Phase 9 delivered as **Databricks Workflows orchestration** — a Serverless Git-source batch workflow that triggers ADF via REST, polls to terminal state, then runs Spark → DQ → Spark → Gold, plus a separate Serverless streaming workflow; see Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, and Phase 9 Evidence)
 
-**Current phase:** Phase 9 — Databricks Workflows
+**Current phase:** Phase 10 — Testing + Documentation + Demo
 
 > **Phase 2 design revision (human-approved).** The original Phase 2 design
 > wrote Bronze as Databricks **Delta** tables through a Databricks-linked ADF
@@ -1187,7 +1187,7 @@ metrics — the Financial section honestly reports the operating-cost ledger
 
 ## Phase 9 — Databricks Workflows
 
-**Status:** NOT STARTED
+**Status:** COMPLETE (see Phase 9 Evidence below)
 
 **Objective**
 Orchestrate the platform with Databricks Workflows: a batch workflow that
@@ -1232,6 +1232,89 @@ separate continuous streaming workflow.
 
 **What NOT to implement yet**
 - Phase 10 polish items (final docs/demo assets).
+
+### Phase 9 Evidence (recorded 2026-08-24, verified against real Azure)
+
+**Implementation:**
+- `databricks/orchestrator/trigger_adf.py` — ADF REST trigger + poll to terminal
+  state (`Succeeded` = task success; `Failed`/`Cancelled`/timeout = task
+  failure). Authentication is a **Service Principal read from the Databricks
+  secret scope `adf-sp`** (keys `client-id` / `client-secret` / `tenant-id`)
+  via `dbutils.secrets.get` + `ClientSecretCredential` (ARM scope
+  `https://management.azure.com/.default`); local development falls back to
+  `DefaultAzureCredential`. **No secret, token, or credential is hard-coded,
+  committed, placed in workflow JSON, or logged** (only the ADF run ID and
+  status are logged).
+- `databricks/workflows/plantation_batch.json` — the batch workflow.
+- `databricks/workflows/sensor_streaming.json` — the separate streaming
+  workflow.
+- Both workflows are **Git-source, Serverless** jobs (no cluster;
+  `spark_python_task` with `"source": "GIT"` and `environment_key`), pointing
+  at this repository's `main` branch.
+- `tests/test_orchestrator.py` — 32 offline contract tests (URL construction,
+  auth/config errors, no-secret-logging, runId extraction, poll terminal
+  states, DAG ordering, DQ gating, streaming independence, no hard-coded
+  secrets, `__main__` entrypoint guards).
+
+**Databricks Serverless exit-code fix (verified live):** a `sys.exit(main())`
+entrypoint surfaces ANY `SystemExit` — including `SystemExit(0)` — as a task
+failure (`RUN_EXECUTION_ERROR`), and a returned exit-code int is ignored. All
+four task scripts (`trigger_adf.py`, `bronze_to_silver.py`, `dq_checks.py`,
+`silver_to_gold.py`) therefore call `main()` directly from `__main__` and
+signal outcome by exception (success = `main()` returns; failure = raised
+non-`SystemExit` exception). No transformation, DQ, or business logic changed.
+
+**Batch workflow — VERIFIED end-to-end (live run):**
+- Databricks job `plantation_batch` — **Job ID `817981045760739`**.
+- Successful batch **run ID `582873572808791`** — `TERMINATED / SUCCESS`, all
+  four tasks `TERMINATED / SUCCESS`.
+- Task ordering verified sequential: `trigger_adf` → `bronze_to_silver` →
+  `dq_checks` → `silver_to_gold` (each `depends_on` its predecessor).
+- **ADF trigger + polling via REST — VERIFIED:** `trigger_adf` triggered the
+  existing pipeline `PL_Ingest_Landing_To_Bronze` and polled
+  `Queued → InProgress → Succeeded`. Successful **ADF run ID
+  `e21d377c-a108-4023-925e-66c4c6a38f13`** (2026-08-24T15:14:50Z → 15:17:30Z,
+  confirmed `Succeeded` via `az datafactory pipeline-run show`).
+- **DQ gating — VERIFIED:** `silver_to_gold.depends_on = [dq_checks]` is
+  enforced by the scheduler; Gold ran only after the DQ gate passed. (A
+  critical DQ failure raises, failing the task and blocking Gold — structurally
+  enforced and consistent with the Phase 4 standalone blocking proof.)
+- Batch layer outputs (from task logs):
+  - **Bronze → Silver:** 48,595 rows read from Bronze; **Silver = 48,595**
+    (weather 6,483 / harvest 9,112 / fertilizer 9,000 / equipment 10,000 /
+    hr 2,000 / finance 12,000).
+  - **DQ gate: 42/42 checks PASS** (6 sources × 7 checks; `OVERALL RESULT:
+    PASS`), all CRITICAL reconciliation checks reconciled.
+  - **Silver → Gold:** **Gold = 40,166** (dim_equipment 30 / dim_employee 24 /
+    fact_harvest 9,112 / fact_revenue 12,000 / fact_fertilizer 9,000 /
+    fact_equipment 10,000).
+
+**Streaming workflow — VERIFIED independently (live run):**
+- Databricks job `sensor_streaming` — **Job ID `649208723548889`** (Git-source,
+  Serverless, `databricks/streaming/sensors_stream.py`; **schedule PAUSED**,
+  `0 0/15 * * * ?` UTC — not auto-scheduled).
+- Successful streaming **run ID `49458863344987`** (ONE_TIME manual trigger),
+  `TERMINATED / SUCCESS`; **task run ID `995586378562703`**.
+- The run used the existing Phase 7 `trigger(availableNow=True)` implementation:
+  Auto Loader `incoming/sensors` → live Bronze → live Silver. **This is a
+  drain-and-stop run, not an always-on continuous stream** — one verified
+  manual run with the schedule left PAUSED.
+- **Live Silver = 140 rows** (live Bronze = 140; no new input files since
+  Phase 7 — correct incremental drain, no duplicates).
+- **ADLS checkpoints verified (read-only):**
+  `checkpoints/sensors_stream/sensors_live_bronze` and
+  `checkpoints/sensors_stream/sensors_live_silver` both present and populated;
+  `live-bronze/sensors` and `live-silver/sensors` are valid Delta tables.
+- **Independent of batch:** the streaming job has `depends_on: []` and no
+  structural reference to ADF, DQ, Gold, Synapse, or `plantation_batch`.
+
+**Git commit used for the verified runs:**
+`346116ddd6a24b0fd46dad14cc98445f4d34f556`.
+
+**Completion criteria met:** verified end-to-end orchestrated batch run
+(`582873572808791`, ADF run `e21d377c-a108-4023-925e-66c4c6a38f13`) and a
+separate verified streaming workflow run (`49458863344987`) — with all run
+IDs, task timelines, and layer counts recorded above.
 
 ---
 
@@ -1286,16 +1369,18 @@ prepare the portfolio demo narrative.
 ---
 
 **Next action:**
-Phase 9 — Databricks Workflows. Phase 8 is complete: the Streamlit Plantation
-Operations & Analytics dashboard is implemented and verified on real Azure with
-two serving paths — **historical via Synapse Serverless SQL** over Gold
-(`gold.vw_*`; `fact_harvest` = 9,112) and **live via Databricks SQL** over live
-Silver (`plantation_simulator_dbx.live_serving.*`; 140 readings, 14 sensors,
-135 OK / 2 ANOMALY / 3 FAULT) — with Dark/Light mode, Olist-inspired
-presentation, 139 passing tests, clean Ruff, and browser QA passing in both
-themes (see Phase 8 Evidence). Phase 9 orchestrates the platform with
-Databricks Workflows: a batch workflow that triggers ADF via REST, waits/polls,
-then runs Spark → DQ → Spark → Gold; and a separate continuous streaming
-workflow (`databricks/workflows/plantation_batch.json`,
-`databricks/workflows/sensor_streaming.json`,
-`databricks/orchestrator/trigger_adf.py`).
+Phase 10 — Testing + Documentation + Demo. Phase 9 is complete: the platform is
+orchestrated with **Databricks Workflows** and verified live on Azure — a
+Serverless Git-source **batch workflow** (`plantation_batch`, Job ID
+`817981045760739`, run `582873572808791`) that triggered ADF via REST
+(`PL_Ingest_Landing_To_Bronze`, ADF run `e21d377c-a108-4023-925e-66c4c6a38f13`),
+polled to `Succeeded`, then ran Spark → DQ → Spark → Gold (Bronze/Silver
+48,595; DQ 42/42 PASS; Gold 40,166), plus a separate Serverless **streaming
+workflow** (`sensor_streaming`, Job ID `649208723548889`, run
+`49458863344987`; live Silver 140 rows, checkpoints on ADLS, schedule PAUSED,
+independent of batch), all at commit
+`346116ddd6a24b0fd46dad14cc98445f4d34f556` (see Phase 9 Evidence). Phase 10
+hardens and presents the project: complete/run the test suite, finalize docs
+(pipeline design, data dictionary, deployment, troubleshooting), run a full
+verified end-to-end demo, and perform the final control-document consistency
+pass.
