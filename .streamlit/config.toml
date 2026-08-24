@@ -1,0 +1,13 @@
+# Streamlit theme — matches the Olist Executive Intelligence implementation.
+# primaryColor drives the selected-tab accent (indigo). The dashboard implements
+# its own Dark/Light toggle (see dashboard/app.py); the base theme here is the
+# dark default (matching the Olist config.toml).
+[theme]
+primaryColor = "#6366F1"
+backgroundColor = "#0E1117"
+secondaryBackgroundColor = "#161B22"
+textColor = "#F8FAFC"
+font = "sans serif"
+
+[client]
+showSidebarNavigation = true

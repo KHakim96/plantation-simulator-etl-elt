@@ -323,7 +323,11 @@ def transform_live_silver(df: DataFrame) -> DataFrame:
     out = (
         out.withColumn("timestamp", F.to_timestamp(F.col("timestamp")))
         .withColumn("block_id", F.upper(F.trim(F.col("block_id"))))
-        .withColumn("sensor_id", F.upper(F.trim(F.col("sensor_id"))))
+        .withColumn(
+            "sensor_id",
+            F.when(F.trim(F.col("sensor_id")) == "", None)
+            .otherwise(F.upper(F.trim(F.col("sensor_id")))),
+        )
         .withColumn("sensor_status", F.upper(F.trim(F.col("sensor_status"))))
         .filter(F.col("sensor_id").isNotNull() & F.col("timestamp").isNotNull())
         .dropDuplicates(SENSOR_KEY_COLUMNS)

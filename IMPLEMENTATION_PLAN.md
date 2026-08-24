@@ -4,9 +4,9 @@
 
 **Architecture:** FINAL / FROZEN (see `ARCHITECTURE.md`)
 
-**Implementation:** IN PROGRESS — Phase 0, Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, and Phase 7 complete (Phase 2 delivered as ADF Copy Landing → Bronze **file** ingestion; Phase 3 delivered as Databricks Spark Bronze CSV → Silver Delta; Phase 4 delivered as the Databricks Serverless Silver **Data Quality gate**; Phase 5 delivered as Databricks Spark Silver → Gold Delta; Phase 6 delivered as Azure Synapse Serverless SQL historical serving over Gold Delta; Phase 7 delivered as the Databricks Serverless **live sensor streaming path** (Auto Loader → live Bronze Delta → live Silver Delta) with checkpoints on ADLS; see Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, and Phase 7 Evidence)
+**Implementation:** IN PROGRESS — Phase 0, Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, and Phase 8 complete (Phase 2 delivered as ADF Copy Landing → Bronze **file** ingestion; Phase 3 delivered as Databricks Spark Bronze CSV → Silver Delta; Phase 4 delivered as the Databricks Serverless Silver **Data Quality gate**; Phase 5 delivered as Databricks Spark Silver → Gold Delta; Phase 6 delivered as Azure Synapse Serverless SQL historical serving over Gold Delta; Phase 7 delivered as the Databricks Serverless **live sensor streaming path** (Auto Loader → live Bronze Delta → live Silver Delta) with checkpoints on ADLS; Phase 8 delivered as the **Streamlit Plantation Operations & Analytics dashboard** with historical serving via Synapse Serverless SQL over Gold and live sensor monitoring via Databricks SQL over live Silver; see Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, and Phase 8 Evidence)
 
-**Current phase:** Phase 8 — Databricks SQL + Streamlit
+**Current phase:** Phase 9 — Databricks Workflows
 
 > **Phase 2 design revision (human-approved).** The original Phase 2 design
 > wrote Bronze as Databricks **Delta** tables through a Databricks-linked ADF
@@ -1050,11 +1050,18 @@ streaming workflow JSON, and no coupling of streaming to ADF/Gold/Synapse was
 added. Phase 8+ placeholders (`dashboard/app.py`,
 `databricks/sql/live_sensor_kpis.sql`, workflow JSON) remain untouched.
 
+**Post-Phase 7 correction (identified during the final Phase 8 regression
+verification):** the live Silver transformation in
+`databricks/streaming/sensors_stream.py` was corrected to treat blank
+`sensor_id` values as NULL **before** the existing business-key filter,
+preventing invalid blank sensor records from entering live Silver. Phase 7
+status remains COMPLETE; no other Phase 7 behavior or evidence changed.
+
 ---
 
 ## Phase 8 — Databricks SQL + Streamlit
 
-**Status:** NOT STARTED
+**Status:** COMPLETE (see Phase 8 Evidence below)
 
 **Objective**
 Build the Streamlit dashboard with two data paths: **historical via Synapse
@@ -1094,6 +1101,87 @@ by the one shared serverless SQL Warehouse.
 
 **What NOT to implement yet**
 - No Databricks Workflows orchestration (Phase 9).
+
+### Phase 8 Evidence (recorded 2026-08-24, verified against real Azure)
+
+**Implementation:**
+- `dashboard/app.py` — the **Streamlit Plantation Operations & Analytics
+  dashboard**. Two serving paths over the verified Phase 0–7 platform:
+  - **Historical** — Synapse Serverless SQL (built-in endpoint, no dedicated
+    pool) reading the Phase 6 Gold serving views (`gold.vw_dim_equipment`,
+    `gold.vw_dim_employee`, `gold.vw_fact_harvest`, `gold.vw_fact_revenue`,
+    `gold.vw_fact_fertilizer`, `gold.vw_fact_equipment`).
+  - **Live** — Databricks SQL on the ONE shared serverless SQL Warehouse
+    reading the Phase 8 live sensor KPI layer
+    (`plantation_simulator_dbx.live_serving.*`) over the Phase 7 live Silver
+    Delta.
+- `databricks/sql/live_sensor_kpis.sql` — live sensor KPI layer over live
+  Silver: external Delta table `plantation_simulator_dbx.live_serving.live_silver_sensors`
+  plus four KPI views (`vw_kpi_temperature`, `vw_kpi_humidity`,
+  `vw_kpi_soil_moisture`, `vw_kpi_sensor_status`). Unity Catalog external
+  location; **no storage key, SAS, PAT, or hard-coded secret**.
+- `.streamlit/config.toml` — dark base theme + indigo primary (matches the
+  dashboard theme system).
+- `tests/test_dashboard.py` — Phase 8 tests (presentation contract, theme
+  system, hover/label/bar-label/emoji guards, plus the pre-existing SQL
+  contract and auth tests).
+
+**Dashboard sections (all implemented):** Executive Overview, Harvest,
+Financial / Operating Costs, Fertilizer, Equipment, Workforce, Live Sensors.
+Each historical section: KPI ribbon (`st.metric` cards with colored left
+accents), a primary trend chart, a 2-column chart grid, and a ranking/detail
+table. Live Sensors: KPI ribbon, status pills, sensor-health donut, per-sensor
+status table, and environmental trend charts (air/soil temperature, humidity,
+soil moisture, soil pH).
+
+**Presentation (Olist-inspired):** sidebar theme toggle + architecture context,
+gradient header banner, tab navigation, unified Plotly theming via a single
+`apply_chart_theme` helper, **Dark/Light mode** driven by
+`st.session_state["theme"]`. Polish fixes applied: readable hover tooltips in
+both themes (white bg/dark text light; dark card/light text dark), axis-label
+overlap fixes (auto margins + angled long categorical labels), compact
+bar-chart data labels (`97.52M`, `2K`, `947`), and professional text-only
+navigation (all decorative emojis removed).
+
+**Authentication:**
+- **Synapse (historical):** SQL username/password via env vars, with the
+  **Azure AD access-token path via `azure.identity.AzureCliCredential` +
+  pyodbc `attrs_before`** implemented and preserved as the default with the SQL
+  login as fallback (`SYNAPSE_SQL_AUTH=aad|sql`). The token is never printed or
+  logged.
+- **Databricks SQL (live):** token-based via env vars
+  (`DATABRICKS_SQL_SERVER_HOSTNAME`, `DATABRICKS_SQL_HTTP_PATH`,
+  `DATABRICKS_SQL_ACCESS_TOKEN`). **No secret is hard-coded, logged, or
+  committed** in either path.
+
+**Verification (all on real Azure + real browser):**
+- **Synapse / historical:** `gold.vw_fact_harvest` = **9,112** rows; dashboard
+  historical sections render Gold-derived data (Total Harvested ≈ **97.52M kg**,
+  Operating Cost ≈ **RM 10.73M**, Equipment Fleet **30**, Workforce **24**).
+- **Databricks SQL / live:** **140** live readings, **14** sensors, **135 OK /
+  2 ANOMALY / 3 FAULT** (verified against `live_silver_sensors` and
+  `vw_kpi_sensor_status`).
+- **Tests:** `.venv/bin/python -m pytest tests/ -q` → **139 passed, 21 skipped**
+  (Phase 0–7 unchanged).
+- **Ruff:** clean on `dashboard/app.py` and `tests/test_dashboard.py`.
+- **Browser QA (real Chrome, localhost:8501):** **PASS in both light and dark
+  modes** across all seven sections — header never clipped, no overlap, no
+  horizontal overflow, hover tooltips readable, no overlapping axis labels, bar
+  values displayed, zero decorative emojis; theme switch persists across
+  navigation.
+
+**Final regression verification (after the live Silver blank `sensor_id`
+correction recorded in the Phase 7 evidence — blank `sensor_id` values are now
+treated as NULL before the existing business-key filter, preventing invalid
+blank sensor records from entering live Silver):**
+- **pytest:** `.venv/bin/python -m pytest tests/ -q` → **160 passed**.
+- **Ruff:** **all checks passed**.
+
+**Phase boundary respected:** no Databricks Workflows orchestration (Phase 9),
+no Phase 9/10 artifacts, no new Azure/Databricks/Synapse resources, no
+dedicated Synapse pool, no second Databricks SQL Warehouse, and no fabricated
+metrics — the Financial section honestly reports the operating-cost ledger
+(actual Gold `fact_revenue`) rather than inventing sales/profit.
 
 ---
 
@@ -1198,14 +1286,16 @@ prepare the portfolio demo narrative.
 ---
 
 **Next action:**
-Phase 8 — Databricks SQL + Streamlit. Phase 7 is complete: the live sensor
-streaming path (sensor simulator → ADLS Incoming → Auto Loader → Structured
-Streaming → live Bronze Delta → live Silver Delta) is implemented and verified
-on Azure Databricks Serverless with checkpoints on ADLS — final live counts
-live Bronze **140** / live Silver **140** (initial 56-row run, checkpoint-based
-restart/re-upload protection with 0 duplicate keys, then a clean +56
-incremental run to 140; see Phase 7 Evidence). Phase 8 builds the Streamlit
-dashboard with two data paths: **historical via Synapse Serverless SQL**
-(Gold) and **live via Databricks SQL** (live Silver), served by the one shared
-serverless SQL Warehouse (`dashboard/app.py`,
-`databricks/sql/live_sensor_kpis.sql`).
+Phase 9 — Databricks Workflows. Phase 8 is complete: the Streamlit Plantation
+Operations & Analytics dashboard is implemented and verified on real Azure with
+two serving paths — **historical via Synapse Serverless SQL** over Gold
+(`gold.vw_*`; `fact_harvest` = 9,112) and **live via Databricks SQL** over live
+Silver (`plantation_simulator_dbx.live_serving.*`; 140 readings, 14 sensors,
+135 OK / 2 ANOMALY / 3 FAULT) — with Dark/Light mode, Olist-inspired
+presentation, 139 passing tests, clean Ruff, and browser QA passing in both
+themes (see Phase 8 Evidence). Phase 9 orchestrates the platform with
+Databricks Workflows: a batch workflow that triggers ADF via REST, waits/polls,
+then runs Spark → DQ → Spark → Gold; and a separate continuous streaming
+workflow (`databricks/workflows/plantation_batch.json`,
+`databricks/workflows/sensor_streaming.json`,
+`databricks/orchestrator/trigger_adf.py`).

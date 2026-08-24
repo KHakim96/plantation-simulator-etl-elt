@@ -237,17 +237,207 @@ def test_app_live_references_are_fully_qualified_no_bare_namespace():
 
 def test_app_has_required_dashboard_sections():
     # Plan-required sections: Plantation overview, Harvest, Revenue/Costs,
-    # Fertilizer, Equipment, and Live Sensors (Temperature, Humidity, Soil
-    # Moisture, Sensor Status).
+    # Fertilizer, Equipment, and Live Sensors. The redesigned dashboard maps
+    # these to renderer functions plus a HISTORICAL_SECTIONS registry.
     for fn in (
-        "section_historical_overview",
-        "section_historical_harvest",
-        "section_historical_revenue",
-        "section_historical_fertilizer",
-        "section_historical_equipment",
-        "section_live",
+        "hist_overview",
+        "hist_harvest",
+        "hist_revenue",
+        "hist_fertilizer",
+        "hist_equipment",
+        "hist_workforce",
+        "live_dashboard",
     ):
         assert callable(getattr(app, fn, None)), f"missing section: {fn}"
+
+
+# ---------------------------------------------------------------------------
+# Theme system (light/dark) — presentation behavior only
+# ---------------------------------------------------------------------------
+
+
+def test_theme_state_default_is_dark():
+    """Theme must default to 'dark' (Olist default) in session state."""
+    assert app.current_theme() == "dark"
+    assert app.is_dark() is True
+
+
+def test_both_themes_defined():
+    """Both light and dark design-token sets must exist (Olist values)."""
+    assert app._DARK and app._LIGHT
+    for key in ("bg", "card", "text", "subtext", "border", "grid", "header_bg"):
+        assert app._DARK[key]
+        assert app._LIGHT[key]
+    # Themes must actually differ.
+    assert app._DARK["bg"] != app._LIGHT["bg"]
+    assert app._DARK["card"] != app._LIGHT["card"]
+    # Olist-derived values.
+    assert app._DARK["bg"] == "#0E1117"
+    assert app._LIGHT["bg"] == "#F8FAFC"
+
+
+def test_plotly_light_theme_exists():
+    layout = app.get_plotly_layout(False)
+    assert layout["paper_bgcolor"] == app._LIGHT["card"]
+    assert layout["plot_bgcolor"] == app._LIGHT["card"]
+    assert layout["font"]["color"] == app._LIGHT["text"]
+    assert "colorway" in layout
+
+
+def test_plotly_dark_theme_exists():
+    layout = app.get_plotly_layout(True)
+    assert layout["paper_bgcolor"] == app._DARK["card"]
+    assert layout["plot_bgcolor"] == app._DARK["card"]
+    assert layout["font"]["color"] == app._DARK["text"]
+    assert "colorway" in layout
+
+
+def test_hoverlabel_light_theme_readable():
+    """FIX 1: light-mode hover tooltips = white bg, dark text, subtle border."""
+    import plotly.graph_objects as go
+    app.st.session_state["theme"] = "light"
+    fig = app.apply_chart_theme(go.Figure())
+    hl = fig.layout.hoverlabel
+    assert hl.bgcolor == app._LIGHT["hover_label_bg"] == "#FFFFFF"
+    assert hl.bordercolor == app._LIGHT["hover_label_border"]
+    assert hl.font.color == app._LIGHT["hover_label_text"] == "#0F172A"
+
+
+def test_hoverlabel_dark_theme_readable():
+    """FIX 1: dark-mode hover tooltips = dark card bg, light text, border."""
+    import plotly.graph_objects as go
+    app.st.session_state["theme"] = "dark"
+    fig = app.apply_chart_theme(go.Figure())
+    hl = fig.layout.hoverlabel
+    assert hl.bgcolor == app._DARK["hover_label_bg"]
+    assert hl.bordercolor == app._DARK["hover_label_border"]
+    assert hl.font.color == app._DARK["hover_label_text"] == "#F8FAFC"
+
+
+def test_bar_chart_adds_compact_value_labels(monkeypatch):
+    """FIX 3: bar charts show compact value labels on every bar."""
+    import pandas as pd
+    captured = {}
+
+    def fake_show(fig):
+        captured["fig"] = fig
+
+    monkeypatch.setattr(app, "show_plotly", fake_show)
+    series = pd.Series(
+        [97520000.0, 2000.0, 947.0],
+        index=["OIL PALM", "RUBBER", "TEA"],
+    )
+    app.bar_chart(series, "Test")
+    fig = captured["fig"]
+    bar = fig.data[0]
+    # Labels present, compact, no raw 15-digit decimals.
+    assert list(bar.text) == ["97.52M", "2K", "947"]
+    assert bar.textposition == "outside"
+
+
+def test_bar_chart_angles_long_category_labels(monkeypatch):
+    """FIX 2: long categorical X labels are angled to avoid overlap."""
+    import pandas as pd
+    captured = {}
+
+    def fake_show(fig):
+        captured["fig"] = fig
+
+    monkeypatch.setattr(app, "show_plotly", fake_show)
+    series = pd.Series(
+        [1.0, 2.0, 3.0],
+        index=["MANUAL BROADCASTING", "FOLIAR SPRAYING", "SOIL INJECTION"],
+    )
+    app.bar_chart(series, "Test")
+    fig = captured["fig"]
+    assert fig.layout.xaxis.tickangle == -35
+
+
+def test_compact_num_formatting():
+    """Bar-label number formatting is compact and never 15-digit raw."""
+    assert app._compact_num(97520000) == "97.52M"
+    assert app._compact_num(17920000) == "17.92M"
+    assert app._compact_num(2000) == "2K"
+    assert app._compact_num(947) == "947"
+    assert app._compact_num(5363096.99) == "5.36M"
+
+
+def test_no_decorative_emojis_in_ui():
+    """FIX 4: no decorative emojis remain in the dashboard source."""
+    for emoji in ("🌱", "📊", "🌾", "💰", "🧪", "🚜", "👥", "📡", "⭐", "🟢", "⚡", "🎛️"):
+        assert emoji not in APP_TEXT, f"decorative emoji still present: {emoji}"
+
+
+def test_theme_css_is_theme_scoped():
+    """The injected CSS must be generated per-theme (no single hardcoded bg)."""
+    light_css = app._theme_css(app._LIGHT)
+    dark_css = app._theme_css(app._DARK)
+    assert app._LIGHT["bg"] in light_css
+    assert app._DARK["bg"] in dark_css
+    assert light_css != dark_css
+
+
+def test_theme_switch_uses_session_state():
+    """The theme must be driven by st.session_state['theme']."""
+    assert "theme" in APP_TEXT
+    assert "session_state" in APP_TEXT
+    # Sidebar toggle follows the Olist pattern.
+    assert "Dark Mode" in APP_TEXT
+
+
+def test_app_historical_sections_registry_covers_plan_sections():
+    """HISTORICAL_SECTIONS must cover the plan-defined historical sections and
+    map each to a callable renderer."""
+    expected = {
+        "Executive Overview",
+        "Harvest",
+        "Financial / Costs",
+        "Fertilizer",
+        "Equipment",
+        "Workforce",
+    }
+    assert set(app.HISTORICAL_SECTIONS) == expected
+    for name, fn in app.HISTORICAL_SECTIONS.items():
+        assert callable(fn), f"{name} not callable"
+
+
+def test_app_revenue_section_does_not_fabricate_profit_or_sales():
+    """fact_revenue is a cost ledger. The revenue section must NOT present
+    profit/margin as metrics — only cost analytics. (A disclaimer sentence that
+    says it is "not sales revenue" is allowed.)"""
+    idx = APP_TEXT.find("def hist_revenue")
+    assert idx != -1
+    region = APP_TEXT[idx: idx + 3000]
+    # Strip the explicit disclaimer phrase before scanning for fabricated KPIs.
+    scan = region.lower().replace("not sales revenue", "").replace(
+        "never as sales revenue or profit", ""
+    )
+    for forbidden in ("profit", "margin", "net income"):
+        assert forbidden not in scan, f"revenue section fabricates metric: {forbidden}"
+    # It must reference the cost ledger view.
+    assert "fact_revenue" in region
+
+
+def test_app_kpi_formatters_exist_and_handle_none():
+    for fn in ("_fmt_int", "_fmt_kg", "_fmt_myr", "_fmt_pct"):
+        f = getattr(app, fn, None)
+        assert callable(f), f"missing formatter: {fn}"
+        assert f(None) == "—", f"{fn} must render None as em-dash"
+
+
+def test_app_kpi_and_section_title_exist():
+    assert callable(app.kpi)
+    assert callable(app.section_title)
+    assert callable(app._kpi_ribbon)
+
+
+def test_app_uses_cached_query_wrappers():
+    """The dashboard must route queries through cached wrappers so widgets do
+    not repeatedly open connections."""
+    code = _code_tokens_only(APP_TEXT)
+    assert "cache_data" in code
+    assert callable(app.synapse_df)
+    assert callable(app.databricks_df)
 
 
 def test_app_separates_historical_and_live_paths():
@@ -256,6 +446,174 @@ def test_app_separates_historical_and_live_paths():
     assert "databricks" in APP_TEXT
     assert "run_synapse_query" in APP_TEXT
     assert "run_databricks_query" in APP_TEXT
+
+
+# ---------------------------------------------------------------------------
+# Synapse AAD-token auth (Phase 8 Option B) — no real credentials required
+# ---------------------------------------------------------------------------
+
+
+def test_synapse_config_defaults_to_aad_auth(monkeypatch):
+    """With SYNAPSE_SQL_AUTH unset, the auth mode defaults to 'aad'."""
+    monkeypatch.delenv("SYNAPSE_SQL_AUTH", raising=False)
+    monkeypatch.setenv("SYNAPSE_SQL_SERVER", "s.example.net")
+    monkeypatch.setenv("SYNAPSE_SQL_DATABASE", "db")
+    cfg = app.synapse_config()
+    assert cfg["auth"] == "aad"
+
+
+def test_synapse_config_sql_auth_override(monkeypatch):
+    """SYNAPSE_SQL_AUTH=sql selects the username/password fallback."""
+    monkeypatch.setenv("SYNAPSE_SQL_AUTH", "sql")
+    monkeypatch.setenv("SYNAPSE_SQL_SERVER", "s.example.net")
+    monkeypatch.setenv("SYNAPSE_SQL_DATABASE", "db")
+    monkeypatch.setenv("SYNAPSE_SQL_USERNAME", "u")
+    monkeypatch.setenv("SYNAPSE_SQL_PASSWORD", "p")
+    cfg = app.synapse_config()
+    assert cfg["auth"] == "sql"
+
+
+def test_synapse_configured_aad_needs_only_server_and_db(monkeypatch):
+    """AAD mode is configured with just server+database (token from identity)."""
+    monkeypatch.setenv("SYNAPSE_SQL_AUTH", "aad")
+    monkeypatch.setenv("SYNAPSE_SQL_SERVER", "s.example.net")
+    monkeypatch.setenv("SYNAPSE_SQL_DATABASE", "db")
+    monkeypatch.delenv("SYNAPSE_SQL_USERNAME", raising=False)
+    monkeypatch.delenv("SYNAPSE_SQL_PASSWORD", raising=False)
+    assert app.synapse_configured(app.synapse_config()) is True
+
+
+def test_synapse_configured_sql_needs_username_and_password(monkeypatch):
+    """SQL mode requires username+password in addition to server+database."""
+    monkeypatch.setenv("SYNAPSE_SQL_AUTH", "sql")
+    monkeypatch.setenv("SYNAPSE_SQL_SERVER", "s.example.net")
+    monkeypatch.setenv("SYNAPSE_SQL_DATABASE", "db")
+    monkeypatch.delenv("SYNAPSE_SQL_USERNAME", raising=False)
+    monkeypatch.delenv("SYNAPSE_SQL_PASSWORD", raising=False)
+    assert app.synapse_configured(app.synapse_config()) is False
+    monkeypatch.setenv("SYNAPSE_SQL_USERNAME", "u")
+    monkeypatch.setenv("SYNAPSE_SQL_PASSWORD", "p")
+    assert app.synapse_configured(app.synapse_config()) is True
+
+
+def test_synapse_query_uses_aad_token_path_when_aad(monkeypatch):
+    """In AAD mode, run_synapse_query acquires an Azure identity token and uses
+    attrs_before (SQL_COPT_SS_ACCESS_TOKEN=1256) — never username/password."""
+    import types
+
+    captured = {}
+
+    class _FakeCred:
+        def get_token(self, scope):
+            captured["scope"] = scope
+            return types.SimpleNamespace(token="FAKE_TOKEN")
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_connect(conn_str, attrs_before=None, timeout=None):
+        captured["conn_str"] = conn_str
+        captured["attrs_before"] = attrs_before
+        return _FakeConn()
+
+    monkeypatch.setenv("SYNAPSE_SQL_AUTH", "aad")
+    monkeypatch.setenv("SYNAPSE_SQL_SERVER", "s.example.net")
+    monkeypatch.setenv("SYNAPSE_SQL_DATABASE", "db")
+
+    fake_pyodbc = types.SimpleNamespace(connect=fake_connect)
+    monkeypatch.setitem(sys.modules, "pyodbc", fake_pyodbc)
+    import azure.identity as ai
+
+    monkeypatch.setattr(ai, "AzureCliCredential", _FakeCred)
+
+    import pandas as pd
+
+    monkeypatch.setattr(pd, "read_sql", lambda sql, conn: sql)
+    out = app.run_synapse_query("SELECT 1")
+    assert out == "SELECT 1"
+    # Token passed via attrs_before[1256] as UTF-16-LE bytes; scope is SQL.
+    assert captured["scope"] == "https://database.windows.net/.default"
+    assert 1256 in captured["attrs_before"]
+    assert captured["attrs_before"][1256] == "FAKE_TOKEN".encode("utf-16-le")
+    # No username/password embedded in the connection string for AAD.
+    assert "UID=" not in captured["conn_str"]
+    assert "PWD=" not in captured["conn_str"]
+
+
+def test_synapse_query_uses_uid_pwd_when_sql(monkeypatch):
+    """In SQL mode, run_synapse_query falls back to UID=/PWD= and no AAD token."""
+    import types
+
+    captured = {}
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_connect(conn_str, timeout=None, **kw):
+        captured["conn_str"] = conn_str
+        captured["kw"] = kw
+        return _FakeConn()
+
+    monkeypatch.setenv("SYNAPSE_SQL_AUTH", "sql")
+    monkeypatch.setenv("SYNAPSE_SQL_SERVER", "s.example.net")
+    monkeypatch.setenv("SYNAPSE_SQL_DATABASE", "db")
+    monkeypatch.setenv("SYNAPSE_SQL_USERNAME", "sqluser")
+    monkeypatch.setenv("SYNAPSE_SQL_PASSWORD", "sqlpass")
+
+    fake_pyodbc = types.SimpleNamespace(connect=fake_connect)
+    monkeypatch.setitem(sys.modules, "pyodbc", fake_pyodbc)
+
+    import pandas as pd
+
+    monkeypatch.setattr(pd, "read_sql", lambda sql, conn: sql)
+    out = app.run_synapse_query("SELECT 2")
+    assert out == "SELECT 2"
+    assert "UID=sqluser" in captured["conn_str"]
+    assert "PWD=sqlpass" in captured["conn_str"]
+    # No AAD attrs_before token used in SQL mode.
+    assert "attrs_before" not in captured["kw"]
+
+
+def test_synapse_query_does_not_log_token(monkeypatch, capsys):
+    """The AAD path must never print the access token."""
+    import types
+
+    class _FakeCred:
+        def get_token(self, scope):
+            return types.SimpleNamespace(token="FAKE_SECRET_TOKEN_123")
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setenv("SYNAPSE_SQL_AUTH", "aad")
+    monkeypatch.setenv("SYNAPSE_SQL_SERVER", "s.example.net")
+    monkeypatch.setenv("SYNAPSE_SQL_DATABASE", "db")
+    monkeypatch.setitem(
+        sys.modules,
+        "pyodbc",
+        types.SimpleNamespace(connect=lambda *a, **k: _FakeConn()),
+    )
+    import azure.identity as ai
+
+    monkeypatch.setattr(ai, "AzureCliCredential", _FakeCred)
+    import pandas as pd
+
+    monkeypatch.setattr(pd, "read_sql", lambda sql, conn: sql)
+    app.run_synapse_query("SELECT 3")
+    out = capsys.readouterr().out
+    assert "FAKE_SECRET_TOKEN_123" not in out
 
 
 def test_app_uses_environment_variables_for_config():
