@@ -4,9 +4,9 @@
 
 **Architecture:** FINAL / FROZEN (see `ARCHITECTURE.md`)
 
-**Implementation:** IN PROGRESS — Phase 0, Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, and Phase 9 complete (Phase 2 delivered as ADF Copy Landing → Bronze **file** ingestion; Phase 3 delivered as Databricks Spark Bronze CSV → Silver Delta; Phase 4 delivered as the Databricks Serverless Silver **Data Quality gate**; Phase 5 delivered as Databricks Spark Silver → Gold Delta; Phase 6 delivered as Azure Synapse Serverless SQL historical serving over Gold Delta; Phase 7 delivered as the Databricks Serverless **live sensor streaming path** (Auto Loader → live Bronze Delta → live Silver Delta) with checkpoints on ADLS; Phase 8 delivered as the **Streamlit Plantation Operations & Analytics dashboard** with historical serving via Synapse Serverless SQL over Gold and live sensor monitoring via Databricks SQL over live Silver; Phase 9 delivered as **Databricks Workflows orchestration** — a Serverless Git-source batch workflow that triggers ADF via REST, polls to terminal state, then runs Spark → DQ → Spark → Gold, plus a separate Serverless streaming workflow; see Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, and Phase 9 Evidence)
+**Implementation:** COMPLETE — Phase 0 through Phase 10 all complete and verified (Phase 2 delivered as ADF Copy Landing → Bronze **file** ingestion; Phase 3 delivered as Databricks Spark Bronze CSV → Silver Delta; Phase 4 delivered as the Databricks Serverless Silver **Data Quality gate**; Phase 5 delivered as Databricks Spark Silver → Gold Delta; Phase 6 delivered as Azure Synapse Serverless SQL historical serving over Gold Delta; Phase 7 delivered as the Databricks Serverless **live sensor streaming path** (Auto Loader → live Bronze Delta → live Silver Delta) with checkpoints on ADLS; Phase 8 delivered as the **Streamlit Plantation Operations & Analytics dashboard** with historical serving via Synapse Serverless SQL over Gold and live sensor monitoring via Databricks SQL over live Silver; Phase 9 delivered as **Databricks Workflows orchestration** — a Serverless Git-source batch workflow that triggers ADF via REST, polls to terminal state, then runs Spark → DQ → Spark → Gold, plus a separate Serverless streaming workflow; Phase 10 delivered as **Testing + Documentation + Demo** — full live E2E re-verification, README.md, evidence collection, and final consistency pass)
 
-**Current phase:** Phase 10 — Testing + Documentation + Demo
+**Current phase:** Project complete (all phases 0–10)
 
 > **Phase 2 design revision (human-approved).** The original Phase 2 design
 > wrote Bronze as Databricks **Delta** tables through a Databricks-linked ADF
@@ -1320,7 +1320,7 @@ IDs, task timelines, and layer counts recorded above.
 
 ## Phase 10 — Testing + Documentation + Demo
 
-**Status:** NOT STARTED
+**Status:** COMPLETE (see Phase 10 Evidence below)
 
 **Objective**
 Harden and present the project: complete tests, finalize documentation, and
@@ -1368,19 +1368,76 @@ prepare the portfolio demo narrative.
 
 ---
 
+### Phase 10 Evidence (recorded 2026-08-24, verified against real Azure)
+
+**Live end-to-end verification — ALL STAGES VERIFIED:**
+
+**Local health checks:**
+- pytest: **173 passed, 21 skipped** (2.85s)
+- Ruff: no errors (pre-existing style suggestions in data generators only)
+- git diff --check: **PASS**
+- JSON validation: all project JSON valid
+- Secret scan: **no hardcoded secrets found**
+
+**Git state:**
+- HEAD = origin/main = `db271be49de44887e8b9006b55ace3772d086f80`
+- Databricks workflow used the same commit (verified via
+  `git_snapshot.used_commit` on every task).
+
+**Batch E2E (verified live):**
+
+| Stage | Result | Evidence |
+|---|---|---|
+| Sources | 6 CSVs, 48,595 rows | local file inspection |
+| ADLS Landing | 6 blobs, 48,595 rows, byte-identical | SDK blob listing + download |
+| ADF (workflow-triggered) | Run `21ae0695-8c8e-455e-9029-996aec96c3ea` Succeeded (148s) | REST API run details |
+| ADLS Bronze | 6 CSVs, 48,595 rows, byte-identical to Landing | SDK blob listing |
+| Bronze → Silver | 48,595 rows, 6 Delta tables | Databricks task `634953965469814` logs |
+| DQ gate | **42/42 PASS** | Databricks task `721436103247199` logs |
+| Silver → Gold | **40,166 rows**, 6 Delta models | Databricks task `300378927279767` logs |
+| Synapse Serverless | 40,166 rows, all 6 views match | pyodbc query results |
+| Databricks SQL (live) | 196 rows, 14 sensors | databricks-sql-connector results |
+
+- Databricks batch job `817981045760739`, run `587618142185355` —
+  **TERMINATED/SUCCESS**, all 4 tasks SUCCESS. Task ordering verified:
+  `trigger_adf` → `bronze_to_silver` → `dq_checks` → `silver_to_gold`.
+- ADF run `21ae0695-8c8e-455e-9029-996aec96c3ea` (triggered by the workflow's
+  `trigger_adf` task) — Succeeded, 2026-08-24T16:13:19Z → 16:15:47Z.
+
+**Streaming E2E (verified live):**
+
+| Stage | Result | Evidence |
+|---|---|---|
+| Sensor generation | 4 new CSVs, 56 readings | `sensor_stream_to_adls.py` output |
+| ADLS Incoming | 14 files, 196 readings | SDK blob listing |
+| Auto Loader → live Bronze | 196 rows | Databricks task `118292601590615` logs |
+| Live Bronze → live Silver | 196 rows | Databricks task `118292601590615` logs |
+| Checkpoints | Both populated on ADLS | SDK blob listing |
+| Databricks SQL | 196 rows, 190 OK / 3 ANOMALY / 3 FAULT | databricks-sql-connector results |
+
+- Databricks streaming job `649208723548889`, run `231629716446264` —
+  **TERMINATED/SUCCESS**. Git commit `db271be`.
+- Streaming is independent of batch: no ADF, DQ, Gold, or Synapse dependency.
+
+**Streamlit dashboard (verified in real Chrome browser):**
+- Executive Overview: 97.52M kg harvested, 9,112 ops, RM 10.73M cost, 30
+  equipment, 24 workforce (Synapse/Gold data).
+- Live Sensors: 196 readings, 14 sensors, 190 OK / 3 ANOMALY / 3 FAULT,
+  per-sensor status table, environmental trend charts (Databricks SQL data).
+- Screenshots captured: `docs/evidence/phase-10/22_streamlit_overview.png`,
+  `23_streamlit_live_data.png`, `24_streamlit_harvest.png`,
+  `25_streamlit_financial.png`, `26_streamlit_executive.png`.
+
+**Documentation:**
+- `README.md` — complete project overview written from scratch (was empty).
+- `docs/evidence/phase-10/EVIDENCE_INDEX.md` — structured evidence index.
+
+**Note on browser-based portal screenshots:** Azure Portal and Databricks
+Workspace require interactive sign-in that is not available in this headless
+session. CLI/SDK evidence was collected as the strongest available
+alternative.
+
+---
+
 **Next action:**
-Phase 10 — Testing + Documentation + Demo. Phase 9 is complete: the platform is
-orchestrated with **Databricks Workflows** and verified live on Azure — a
-Serverless Git-source **batch workflow** (`plantation_batch`, Job ID
-`817981045760739`, run `582873572808791`) that triggered ADF via REST
-(`PL_Ingest_Landing_To_Bronze`, ADF run `e21d377c-a108-4023-925e-66c4c6a38f13`),
-polled to `Succeeded`, then ran Spark → DQ → Spark → Gold (Bronze/Silver
-48,595; DQ 42/42 PASS; Gold 40,166), plus a separate Serverless **streaming
-workflow** (`sensor_streaming`, Job ID `649208723548889`, run
-`49458863344987`; live Silver 140 rows, checkpoints on ADLS, schedule PAUSED,
-independent of batch), all at commit
-`346116ddd6a24b0fd46dad14cc98445f4d34f556` (see Phase 9 Evidence). Phase 10
-hardens and presents the project: complete/run the test suite, finalize docs
-(pipeline design, data dictionary, deployment, troubleshooting), run a full
-verified end-to-end demo, and perform the final control-document consistency
-pass.
+Project complete. All 11 phases (0–10) implemented and verified.
