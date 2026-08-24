@@ -11,7 +11,8 @@
       "task_key": "sensors_stream",
       "description": "Structured Streaming (trigger(availableNow=True)): Incoming -> live Bronze -> live Silver, checkpointed on ADLS. Drains available micro-batches then stops.",
       "spark_python_task": {
-        "python_file": "databricks/streaming/sensors_stream.py"
+        "python_file": "databricks/streaming/sensors_stream.py",
+        "source": "GIT"
       },
       "environment_key": "serverless"
     }

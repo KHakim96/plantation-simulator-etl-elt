@@ -11,7 +11,8 @@
       "task_key": "trigger_adf",
       "description": "Trigger PL_Ingest_Landing_To_Bronze via ADF REST and poll to a terminal state (Succeeded=0, else 1). SP credentials read from Databricks secret scope at runtime.",
       "spark_python_task": {
-        "python_file": "databricks/orchestrator/trigger_adf.py"
+        "python_file": "databricks/orchestrator/trigger_adf.py",
+        "source": "GIT"
       },
       "environment_key": "serverless"
     },
@@ -22,7 +23,8 @@
         { "task_key": "trigger_adf" }
       ],
       "spark_python_task": {
-        "python_file": "databricks/batch/bronze_to_silver.py"
+        "python_file": "databricks/batch/bronze_to_silver.py",
+        "source": "GIT"
       },
       "environment_key": "serverless"
     },
@@ -33,7 +35,8 @@
         { "task_key": "bronze_to_silver" }
       ],
       "spark_python_task": {
-        "python_file": "databricks/batch/dq_checks.py"
+        "python_file": "databricks/batch/dq_checks.py",
+        "source": "GIT"
       },
       "environment_key": "serverless"
     },
@@ -44,7 +47,8 @@
         { "task_key": "dq_checks" }
       ],
       "spark_python_task": {
-        "python_file": "databricks/batch/silver_to_gold.py"
+        "python_file": "databricks/batch/silver_to_gold.py",
+        "source": "GIT"
       },
       "environment_key": "serverless"
     }

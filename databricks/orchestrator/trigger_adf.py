@@ -29,7 +29,6 @@ Uses ``requests`` + ``azure-identity`` (already project dependencies).
 from __future__ import annotations
 
 import os
-import sys
 import time
 
 import requests
@@ -288,36 +287,37 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
-def main() -> int:
+def main() -> None:
     """Trigger the ADF pipeline and poll to a terminal state.
 
-    Exit 0 on Succeeded; 1 on Failed/Cancelled/timeout/error.
+    Databricks Serverless python-task semantics (verified live): a returned
+    exit-code int is ignored, and ANY ``SystemExit`` (even ``SystemExit(0)``)
+    is surfaced by the job harness as a task failure (RUN_EXECUTION_ERROR).
+    Therefore this entry point signals outcome by exception, not by return
+    code: it returns normally on Succeeded and raises on any failure so the
+    Databricks task fails. No token/secret is ever logged.
     """
     timeout_seconds = _int_env("ADF_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)
     poll_interval = _int_env(
         "ADF_POLL_INTERVAL_SECONDS", DEFAULT_POLL_INTERVAL_SECONDS
     )
-    try:
-        run_id = trigger_pipeline()
-        final_status = poll_until_terminal(
-            run_id,
-            timeout_seconds=timeout_seconds,
-            poll_interval_seconds=poll_interval,
-        )
-    except (AdfConfigError, AdfRunError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
+    run_id = trigger_pipeline()
+    final_status = poll_until_terminal(
+        run_id,
+        timeout_seconds=timeout_seconds,
+        poll_interval_seconds=poll_interval,
+    )
 
     if final_status == STATUS_SUCCEEDED:
         print(f"ADF pipeline {PIPELINE_NAME} Succeeded. runId: {run_id}")
-        return 0
-    print(
+        return
+    raise AdfRunError(
         f"ADF pipeline {PIPELINE_NAME} ended with status "
-        f"{final_status}. runId: {run_id}",
-        file=sys.stderr,
+        f"{final_status}. runId: {run_id}"
     )
-    return 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # No sys.exit(): on Databricks Serverless a SystemExit (even code 0) fails
+    # the task. Success = main() returns; failure = main() raises.
+    main()
