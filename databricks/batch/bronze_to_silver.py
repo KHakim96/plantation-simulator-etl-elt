@@ -567,15 +567,21 @@ def main() -> int:
         print("  ----------------------------------------")
         print(f"  - {'TOTAL':12s}: {total:>6d} rows")
         return 0
-    except Exception as exc:  # noqa: BLE001 - top-level batch entry point: fail loudly
+    except Exception as exc:
         print("\n========================================================")
         print("Bronze → Silver Processing FAILED")
         print("========================================================")
         print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
+        # Databricks Serverless python-task semantics (verified live): a
+        # returned exit-code int is ignored, and ANY SystemExit (even code 0)
+        # is surfaced as a task failure. Signal failure with a raised
+        # non-SystemExit exception instead of returning 1.
+        raise RuntimeError(f"Bronze → Silver processing failed: {exc}") from exc
     finally:
         spark.stop()
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # No sys.exit(): on Databricks Serverless a SystemExit (even code 0) fails
+    # the task. Success = main() returns; failure = main() raises.
+    main()

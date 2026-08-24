@@ -12,7 +12,8 @@ Covered:
   * poll terminal states: Succeeded/Failed/Cancelled/timeout (mocked).
   * workflow JSON validity, DAG ordering, DQ gating, streaming independence.
   * script-path references exist; no hard-coded secrets.
-  * bronze_to_silver / silver_to_gold use sys.exit(main()).
+  * all Phase 9 task scripts call main() directly (no sys.exit) so Databricks
+    Serverless marks success/failure correctly.
 """
 
 from __future__ import annotations
@@ -238,15 +239,28 @@ class TestTriggerAndPoll:
         with pytest.raises(ta.AdfConfigError):
             ta.poll_until_terminal("run1", timeout_seconds=10, poll_interval_seconds=0)
 
-    def test_main_returns_zero_on_success(self, ta, monkeypatch):
+    def test_main_succeeds_without_exception_on_succeeded(self, ta, monkeypatch):
+        # Databricks Serverless: success = main() returns normally (no raise).
         monkeypatch.setattr(ta, "trigger_pipeline", lambda: "run1")
         monkeypatch.setattr(ta, "poll_until_terminal", lambda *a, **k: "Succeeded")
-        assert ta.main() == 0
+        assert ta.main() is None
 
-    def test_main_returns_one_on_failure(self, ta, monkeypatch):
+    def test_main_raises_on_failure(self, ta, monkeypatch):
+        # Databricks Serverless: failure must be a raised non-SystemExit
+        # exception (a returned int is ignored by the job harness).
         monkeypatch.setattr(ta, "trigger_pipeline", lambda: "run1")
         monkeypatch.setattr(ta, "poll_until_terminal", lambda *a, **k: "Failed")
-        assert ta.main() == 1
+        with pytest.raises(ta.AdfRunError):
+            ta.main()
+
+    def test_main_raises_on_timeout_or_config_error(self, ta, monkeypatch):
+        # A config/timeout error must also propagate as a raised exception.
+        def _boom():
+            raise ta.AdfConfigError("timeout")
+
+        monkeypatch.setattr(ta, "trigger_pipeline", _boom)
+        with pytest.raises(ta.AdfConfigError):
+            ta.main()
 
 
 # ==============================================================================
@@ -414,7 +428,10 @@ class TestNoHardcodedSecrets:
 
 
 # ==============================================================================
-# 18. sys.exit(main()) in Bronze->Silver and Silver->Gold
+# 18. __main__ guards: ALL Phase 9 task scripts call main() directly (no
+#     sys.exit). On Databricks Serverless ANY SystemExit — even SystemExit(0) —
+#     is surfaced as a task failure (RUN_EXECUTION_ERROR), so success must be a
+#     normal return and failure a raised non-SystemExit exception.
 # ==============================================================================
 
 
@@ -423,12 +440,16 @@ class TestExitCodePropagation:
         "rel",
         [
             "databricks/batch/bronze_to_silver.py",
+            "databricks/batch/dq_checks.py",
             "databricks/batch/silver_to_gold.py",
             "databricks/orchestrator/trigger_adf.py",
         ],
     )
-    def test_main_guard_uses_sys_exit(self, rel):
+    def test_main_guard_calls_main_without_sys_exit(self, rel):
         text = (REPO_ROOT / rel).read_text(encoding="utf-8")
-        assert re.search(r'if __name__ == "__main__":\s*\n\s*sys\.exit\(main\(\)\)', text), (
-            f"{rel} must call sys.exit(main()) in its __main__ guard"
+        assert "sys.exit(main())" not in text, (
+            f"{rel} must not use sys.exit(main()) on Databricks Serverless"
         )
+        assert re.search(
+            r'if __name__ == "__main__":\s*\n(\s*#.*\n)*\s*main\(\)\s*$', text
+        ), f"{rel} __main__ guard must call main() directly"

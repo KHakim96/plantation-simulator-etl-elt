@@ -300,8 +300,11 @@ def test_critical_failure_blocks_gate(spark, monkeypatch):
 
 
 @requires_spark
-def test_main_returns_1_on_critical_failure(spark, monkeypatch):
-    # Force run_dq_for_source to yield a critical failure, then check exit code.
+def test_main_raises_on_critical_failure(spark, monkeypatch):
+    # Force run_dq_for_source to yield a critical failure. On Databricks
+    # Serverless a returned exit-code int is ignored and any SystemExit fails
+    # the task, so the DQ gate must signal a CRITICAL failure by RAISING a
+    # non-SystemExit exception (this blocks the downstream silver_to_gold task).
     failing = dq.CheckResult("weather", "row_count", False, True, "forced")
     monkeypatch.setattr(
         dq, "run_dq_for_source", lambda s, src, env: [failing]
@@ -310,7 +313,8 @@ def test_main_returns_1_on_critical_failure(spark, monkeypatch):
     monkeypatch.setenv("PIPELINE_ENV", "local")
     # Prevent spark.stop() from killing the shared fixture session.
     monkeypatch.setattr(spark, "stop", lambda: None)
-    assert dq.main() == 1
+    with pytest.raises(RuntimeError):
+        dq.main()
 
 
 @requires_spark

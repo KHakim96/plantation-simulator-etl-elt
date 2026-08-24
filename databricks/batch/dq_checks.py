@@ -481,14 +481,26 @@ def main() -> int:
         for source in SOURCE_ORDER:
             results.extend(run_dq_for_source(spark, source, env))
         print_report(results)
-        return 0 if evaluate_overall(results) else 1
-    except Exception as exc:  # noqa: BLE001 - gate entry point: fail loudly
+        if evaluate_overall(results):
+            return 0
+        # CRITICAL DQ failure: raise a non-SystemExit exception so the
+        # Databricks Serverless task FAILS and the downstream silver_to_gold
+        # task (depends_on dq_checks) is blocked. A returned int would be
+        # ignored by the job harness; SystemExit would also fail the task, so
+        # we deliberately raise a normal exception.
+        raise RuntimeError(
+            "DQ gate FAILED: one or more CRITICAL checks failed "
+            "(downstream Gold processing blocked)."
+        )
+    except Exception as exc:
         print(f"\nDQ gate ERROR (treating as critical failure): {exc}",
               file=sys.stderr)
-        return 1
+        raise
     finally:
         spark.stop()
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # No sys.exit(): on Databricks Serverless a SystemExit (even code 0) fails
+    # the task. DQ PASS = main() returns; DQ FAIL/error = main() raises.
+    main()
