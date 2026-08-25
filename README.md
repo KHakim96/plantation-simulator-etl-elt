@@ -1000,12 +1000,21 @@ The seven tabs (exact labels):
   `DATABRICKS_SQL_SERVER_HOSTNAME`, `DATABRICKS_SQL_HTTP_PATH`,
   `DATABRICKS_SQL_ACCESS_TOKEN`.
 
-### Dashboard screenshot
+### Dashboard screenshots
 
 All seven tabs are implemented and documented above. The dashboard is the
-consumption layer rather than the focus of this ETL/ELT project; the captured
-evidence below shows the **Live Sensors** tab rendering real sensor data served
-by Databricks SQL.
+consumption layer rather than the focus of this ETL/ELT project, so only the two
+captured dashboard screenshots are shown below: the **Executive Overview** tab
+(historical data via Synapse) and the **Live Sensors** tab (live data via
+Databricks SQL).
+
+<img
+  src="docs/evidence/phase-10/screenshots/22_streamlit_overview.png"
+  alt="Streamlit Executive Overview — the Executive Overview tab KPI cards and harvest charts via Synapse Serverless SQL over Gold"
+  width="900"
+/>
+
+**Figure 22 — Streamlit Executive Overview.** The Executive Overview tab KPI cards (Total Harvested, Harvest Operations, Operating Cost, Equipment Fleet, Workforce) and harvest charts are driven by Synapse Serverless SQL over Gold — the historical path renders real Gold data.
 
 <img
   src="docs/evidence/phase-10/screenshots/25_streamlit_live_sensors.png"
@@ -1280,7 +1289,7 @@ plantation-simulator-etl-elt/
 │   │   ├── plantation_batch.json # batch workflow (4-task DAG)
 │   │   └── sensor_streaming.json # streaming workflow (PAUSED schedule)
 │   ├── verify_gold.py            # read-only Gold verifier
-│   └── verify_silver.ipynb.ipynb # Silver exploration notebook
+│   └── verify_silver.ipynb       # Silver exploration notebook
 ├── adf/
 │   ├── pipeline/PL_Ingest_Landing_To_Bronze.json
 │   ├── dataset/DS_Landing_Source.json
@@ -1294,19 +1303,13 @@ plantation-simulator-etl-elt/
 │   └── app.py                    # Streamlit dashboard (7 sections)
 ├── tests/                        # 173 tests (9 files)
 ├── docs/
-│   ├── evidence/phase-10/        # EVIDENCE_INDEX.md + captured PNGs
-│   └── *.md                      # design/deployment/troubleshooting (placeholders)
+│   └── evidence/phase-10/        # EVIDENCE_INDEX.md + captured PNGs
 ├── data/                         # local simulation scratch (git-ignored)
 ├── ARCHITECTURE.md               # frozen target architecture (source of truth)
 ├── IMPLEMENTATION_PLAN.md        # phased roadmap + per-phase evidence
 ├── AGENTS.md                     # operating rules / anti-hallucination
 └── requirements.txt
 ```
-
-> Note: `docs/troubleshooting.md`, `docs/pipeline_design.md`,
-> `docs/deployment.md`, and `docs/data_dictionary.md` are present but currently
-> empty placeholders; the substantive content lives in `ARCHITECTURE.md`,
-> `IMPLEMENTATION_PLAN.md`, this README, and `docs/evidence/phase-10/`.
 
 ---
 

@@ -1328,9 +1328,8 @@ prepare the portfolio demo narrative.
 
 **Files involved**
 - `tests/` (all test files)
-- `docs/pipeline_design.md`, `docs/data_dictionary.md`,
-  `docs/deployment.md`, `docs/troubleshooting.md`
 - `README.md` (final project overview — its owning phase)
+- `docs/evidence/phase-10/EVIDENCE_INDEX.md` (evidence index)
 - `AGENTS.md`, `ARCHITECTURE.md`, `IMPLEMENTATION_PLAN.md` (final consistency
   pass)
 
@@ -1341,8 +1340,10 @@ prepare the portfolio demo narrative.
 **Implementation tasks**
 1. Complete and run the test suite (generators, schemas, transformations,
    data quality).
-2. Finalize docs: pipeline design, data dictionary (from **actual** final
-   schemas), deployment steps, troubleshooting.
+2. Finalize documentation: this README (project overview), the evidence index,
+   and the three control documents (design, deployment, and troubleshooting
+   detail live in `ARCHITECTURE.md`, this plan, and the README rather than in
+   separate placeholder files).
 3. Run a full verified end-to-end demo (batch + streaming + dashboard) and
    capture evidence.
 4. Final consistency check across the three control documents.
@@ -1424,9 +1425,10 @@ prepare the portfolio demo narrative.
   equipment, 24 workforce (Synapse/Gold data).
 - Live Sensors: 196 readings, 14 sensors, 190 OK / 3 ANOMALY / 3 FAULT,
   per-sensor status table, environmental trend charts (Databricks SQL data).
-- Screenshots captured: `docs/evidence/phase-10/22_streamlit_overview.png`,
-  `23_streamlit_live_data.png`, `24_streamlit_harvest.png`,
-  `25_streamlit_financial.png`, `26_streamlit_executive.png`.
+- Screenshots captured (Streamlit dashboard): `docs/evidence/phase-10/22_streamlit_overview.png`
+  (Executive Overview) and `docs/evidence/phase-10/25_streamlit_live_sensors.png`
+  (Live Sensors). The full captured screenshot set (01–21, 22, 25) is indexed in
+  `docs/evidence/phase-10/EVIDENCE_INDEX.md`.
 
 **Documentation:**
 - `README.md` — complete project overview written from scratch (was empty).
