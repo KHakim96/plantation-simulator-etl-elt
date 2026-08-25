@@ -191,6 +191,19 @@ that platform.
 | Source simulation | Python (pandas/numpy), deterministic (seed 42) |
 | Language / tooling | Python 3.10, pytest, Ruff |
 
+### AI-Assisted Development Stack
+
+| Concern | Technology |
+|---|---|
+| AI coding harness | OpenCode |
+| Agentic development | Multi-step AI agents for implementation, debugging, testing, Azure execution, and E2E verification |
+| LLMs | Kimi K3, GLM 5.3, Gemini 3.7, DeepSeek, and other configured models |
+| Agent/model orchestration | OMO Slim |
+| Browser automation / inspection | Chrome DevTools MCP |
+| Documentation / library context | Context7 MCP |
+| GitHub code search | `gh_grep` MCP |
+| Version control | Git + GitHub |
+
 ---
 
 ## 5. Architecture Overview
