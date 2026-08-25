@@ -1425,8 +1425,8 @@ prepare the portfolio demo narrative.
   equipment, 24 workforce (Synapse/Gold data).
 - Live Sensors: 196 readings, 14 sensors, 190 OK / 3 ANOMALY / 3 FAULT,
   per-sensor status table, environmental trend charts (Databricks SQL data).
-- Screenshots captured (Streamlit dashboard): `docs/evidence/phase-10/22_streamlit_overview.png`
-  (Executive Overview) and `docs/evidence/phase-10/25_streamlit_live_sensors.png`
+ - Screenshots captured (Streamlit dashboard): `docs/evidence/phase-10/screenshots/22_streamlit_overview.png`
+   (Executive Overview) and `docs/evidence/phase-10/screenshots/25_streamlit_live_sensors.png`
   (Live Sensors). The full captured screenshot set (01–21, 22, 25) is indexed in
   `docs/evidence/phase-10/EVIDENCE_INDEX.md`.
 

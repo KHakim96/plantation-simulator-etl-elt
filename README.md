@@ -29,7 +29,7 @@ plantation data is used.
 flowchart TB
     subgraph SOURCES["DATA SOURCES"]
         GEN["Batch Sources<br/>6 systems"]
-        SEN["Sensors<br/>24 devices"]
+        SEN["Sensors<br/>14 devices"]
     end
 
     subgraph BATCH["BATCH PIPELINE"]
@@ -448,7 +448,10 @@ data.
     **`copyBehavior: "Overwrite"`** → idempotent reruns, no duplicates.
   - `enableStaging: false`; policy `timeout 12h`, `retry 2`, `retryInterval 30s`.
 - **Datasets:** `DS_Landing_Source` and `DS_Bronze_Sink` — both `DelimitedText`
-  (CSV, UTF-8, comma, header row), parameterized by container/folder/file.
+  (CSV, UTF-8, comma, header row). `DS_Landing_Source` is parameterized by
+  container/folder (the source file is supplied through the pipeline
+  wildcard/source item); `DS_Bronze_Sink` carries the sink file
+  parameterization.
 - **Linked service:** `LS_Adls_PlantationSimulator` (`AzureBlobFS`) pointing at
   `https://plantationsimulatorrg.dfs.core.windows.net`. It carries **no key,
   SAS, or secret** — authentication is the **ADF system-assigned managed
@@ -819,7 +822,7 @@ sensor_stream_to_adls.py → ADLS INCOMING
 
 ### 16.1 Sensor simulation & Incoming
 
-`sensor_stream_to_adls.py` simulates **24 field sensors** (`SNS-<BLOCK>-<NN>`;
+`sensor_stream_to_adls.py` simulates **14 field sensors** (`SNS-<BLOCK>-<NN>`;
 two sensors each on `BLK01/BLK05/BLK06/BLK10`, one on the other blocks) emitting
 telemetry on a **15-minute cadence**. Each interval produces **one CSV
 micro-batch** written to `incoming/sensors/sensors_<UTCtimestamp>.csv` (one

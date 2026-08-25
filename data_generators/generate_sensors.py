@@ -1,7 +1,7 @@
 """
 IoT Sensor Data Generator for Smart Plantation Analytics.
 
-Generates synthetic 15-minute telemetry for 20 plantation blocks,
+Generates synthetic 15-minute telemetry for 10 plantation blocks,
 streaming output directly to CSV to support high-volume generation (~2.5M rows).
 """
 
@@ -88,7 +88,7 @@ def generate_sensor_readings(config: Dict[str, Any]) -> str:
     out_dir.mkdir(parents=True, exist_ok=True)
     out_file = out_dir / "sensor_readings.csv"
 
-    # Define sensors per block (24 total sensors across 20 blocks)
+    # Define sensors per block (14 total sensors across 10 blocks)
     sensors_list = []
     for block in blocks:
         b_id = block["id"]
